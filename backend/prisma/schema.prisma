@@ -1,0 +1,137 @@
+// ─────────────────────────────────────────────────────────────
+// SmartProgress — Prisma Schema
+// Layered Architecture + Outbox Pattern
+// PostgreSQL with JSONB support for flexible workout logging
+// ─────────────────────────────────────────────────────────────
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────
+// User — Sporcu profili
+// ─────────────────────────────────────────────
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  firstName    String   @map("first_name")
+  lastName     String   @map("last_name")
+  avatarUrl    String?  @map("avatar_url")
+  role         Role     @default(ATHLETE)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  workoutLogs WorkoutLog[]
+
+  @@map("users")
+}
+
+enum Role {
+  ATHLETE
+  COACH
+  ADMIN
+}
+
+// ─────────────────────────────────────────────
+// Sport — Spor dalı tanımı
+// ─────────────────────────────────────────────
+model Sport {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  slug      String   @unique
+  icon      String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  workoutLogs WorkoutLog[]
+
+  @@map("sports")
+}
+
+// ─────────────────────────────────────────────
+// WorkoutLog — Antrenman kaydı (JSONB)
+// ─────────────────────────────────────────────
+// `data` alanı PostgreSQL JSONB formatında saklanır.
+// Farklı spor dallarına özel esnek log yapısı:
+//
+// Örnek — Fitness:
+// {
+//   "exercises": [
+//     {
+//       "name": "Bench Press",
+//       "sets": [
+//         { "reps": 10, "weight": 80, "unit": "kg" },
+//         { "reps": 8,  "weight": 85, "unit": "kg" }
+//       ]
+//     }
+//   ],
+//   "totalDuration": 3600,
+//   "caloriesBurned": 450
+// }
+//
+// Örnek — Koşu:
+// {
+//   "distance": 10.5,
+//   "distanceUnit": "km",
+//   "duration": 3150,
+//   "avgPace": "5:00",
+//   "avgHeartRate": 155,
+//   "elevationGain": 120,
+//   "route": { "type": "LineString", "coordinates": [...] }
+// }
+//
+model WorkoutLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  sportId   String   @map("sport_id") @db.Uuid
+  title     String
+  notes     String?
+  data      Json     @db.JsonB
+  logDate   DateTime @map("log_date") @db.Date
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sport Sport @relation(fields: [sportId], references: [id], onDelete: Restrict)
+
+  @@index([userId])
+  @@index([sportId])
+  @@index([logDate])
+  @@index([userId, logDate])
+  @@map("workout_logs")
+}
+
+// ─────────────────────────────────────────────
+// OutboxEvent — Outbox Pattern
+// ─────────────────────────────────────────────
+// Event'lerin veritabanı transaction'ı ile birlikte
+// güvenli bir şekilde kaydedilip, ayrı bir process
+// tarafından asenkron olarak yayınlanmasını sağlar.
+//
+// Akış:
+// 1. İş mantığı + OutboxEvent aynı transaction'da yazılır
+// 2. Background job (outbox processor) processedAt=null olan
+//    event'leri okur, yayınlar, processedAt'i günceller
+//
+model OutboxEvent {
+  id            String    @id @default(uuid()) @db.Uuid
+  aggregateType String    @map("aggregate_type")
+  aggregateId   String    @map("aggregate_id") @db.Uuid
+  eventType     String    @map("event_type")
+  payload       Json      @db.JsonB
+  createdAt     DateTime  @default(now()) @map("created_at")
+  processedAt   DateTime? @map("processed_at")
+
+  @@index([processedAt])
+  @@index([aggregateType, aggregateId])
+  @@index([createdAt])
+  @@map("outbox_events")
+}
