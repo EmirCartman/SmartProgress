@@ -11,15 +11,15 @@ services:
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-smartprogress}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-smartprogress_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-smartprogress_db}
+      POSTGRES_USER: emir
+      POSTGRES_PASSWORD: secretpassword
+      POSTGRES_DB: smartprogress
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - smartprogress-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartprogress} -d ${POSTGRES_DB:-smartprogress_db}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartprogress} -d ${POSTGRES_DB:-smartprogress_db}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -39,7 +39,7 @@ services:
     networks:
       - smartprogress-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       timeout: 5s
       retries: 5
