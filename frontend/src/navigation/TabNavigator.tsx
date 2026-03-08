@@ -1,0 +1,76 @@
+// ─────────────────────────────────────────────
+// TabNavigator — Bottom Tab Navigation
+// Custom dark gym-themed styling
+// ─────────────────────────────────────────────
+import React from "react";
+import { StyleSheet, Platform } from "react-native";
+import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
+import { Ionicons } from "@expo/vector-icons";
+import { colors, fontSize, fontWeight } from "../constants/theme";
+
+import HomeScreen from "../screens/HomeScreen";
+import MyProgressScreen from "../screens/MyProgressScreen";
+import ProfileScreen from "../screens/ProfileScreen";
+
+const Tab = createBottomTabNavigator();
+
+type IoniconsName = React.ComponentProps<typeof Ionicons>["name"];
+
+const TAB_ICONS: Record<string, { focused: IoniconsName; unfocused: IoniconsName }> = {
+    Home: { focused: "home", unfocused: "home-outline" },
+    MyProgress: { focused: "analytics", unfocused: "analytics-outline" },
+    Profile: { focused: "person", unfocused: "person-outline" },
+};
+
+export default function TabNavigator() {
+    return (
+        <Tab.Navigator
+            screenOptions={({ route }) => ({
+                headerShown: false,
+                tabBarStyle: styles.tabBar,
+                tabBarActiveTintColor: colors.accent,
+                tabBarInactiveTintColor: colors.tabBarInactive,
+                tabBarLabelStyle: styles.tabBarLabel,
+                tabBarIcon: ({ focused, color, size }) => {
+                    const icons = TAB_ICONS[route.name];
+                    const iconName = focused ? icons.focused : icons.unfocused;
+                    return <Ionicons name={iconName} size={size} color={color} />;
+                },
+            })}
+        >
+            <Tab.Screen
+                name="Home"
+                component={HomeScreen}
+                options={{ tabBarLabel: "Ana Sayfa" }}
+            />
+            <Tab.Screen
+                name="MyProgress"
+                component={MyProgressScreen}
+                options={{ tabBarLabel: "Gelişimim" }}
+            />
+            <Tab.Screen
+                name="Profile"
+                component={ProfileScreen}
+                options={{ tabBarLabel: "Profilim" }}
+            />
+        </Tab.Navigator>
+    );
+}
+
+const styles = StyleSheet.create({
+    tabBar: {
+        backgroundColor: colors.tabBarBg,
+        borderTopColor: colors.border,
+        borderTopWidth: 1,
+        height: Platform.OS === "ios" ? 88 : 64,
+        paddingTop: 8,
+        paddingBottom: Platform.OS === "ios" ? 28 : 8,
+        elevation: 0,
+        shadowOpacity: 0,
+    },
+    tabBarLabel: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.semibold,
+        marginTop: 2,
+    },
+});

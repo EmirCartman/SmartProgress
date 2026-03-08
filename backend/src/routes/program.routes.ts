@@ -1,0 +1,26 @@
+// ─────────────────────────────────────────────
+// Program Routes
+// ─────────────────────────────────────────────
+import { Router } from "express";
+import { programController } from "../controllers/program.controller";
+import { authenticate } from "../middlewares/auth";
+
+const router = Router();
+
+// Public routes
+router.get("/public", (req, res, next) => programController.listPublic(req, res, next));
+
+// Protected routes (require authentication)
+router.use(authenticate);
+
+router.post("/", (req, res, next) => programController.create(req, res, next));
+router.get("/mine", (req, res, next) => programController.listMine(req, res, next));
+router.patch("/:id/visibility", (req, res, next) =>
+    programController.toggleVisibility(req, res, next),
+);
+router.get("/suggest/:exerciseName", (req, res, next) =>
+    programController.suggestWeight(req, res, next),
+);
+router.get("/:id", (req, res, next) => programController.getById(req, res, next));
+
+export default router;

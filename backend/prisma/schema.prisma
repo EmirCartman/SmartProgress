@@ -23,12 +23,14 @@ model User {
   firstName    String   @map("first_name")
   lastName     String   @map("last_name")
   avatarUrl    String?  @map("avatar_url")
+  settings     Json?    @db.JsonB
   role         Role     @default(ATHLETE)
   isActive     Boolean  @default(true) @map("is_active")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
   workoutLogs WorkoutLog[]
+  programs    Program[]
 
   @@map("users")
 }
@@ -54,6 +56,26 @@ model Sport {
   workoutLogs WorkoutLog[]
 
   @@map("sports")
+}
+
+// ─────────────────────────────────────────────
+// Program — Antrenman programı
+// ─────────────────────────────────────────────
+model Program {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  name        String
+  description String?
+  data        Json?    @db.JsonB
+  isPublic    Boolean  @default(false) @map("is_public")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([isPublic])
+  @@map("programs")
 }
 
 // ─────────────────────────────────────────────

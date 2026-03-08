@@ -67,9 +67,6 @@ services:
         condition: service_healthy
     networks:
       - smartprogress-network
-    volumes:
-      - ./backend:/app
-      - /app/node_modules
 
   # ─────────────────────────────────────────────
   # Frontend — React Native (Expo Web)
@@ -89,9 +86,6 @@ services:
       - backend
     networks:
       - smartprogress-network
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
 
 # ─────────────────────────────────────────────
 # Volumes

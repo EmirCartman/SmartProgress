@@ -1,0 +1,65 @@
+﻿­şÜÇ SmartProgress API running on port 3000
+­şôï Environment: development
+prisma:info Starting a postgresql pool with 17 connections.
+prisma:query SELECT "public"."users"."id", "public"."users"."email", "public"."users"."password_hash", "public"."users"."first_name", "public"."users"."last_name", "public"."users"."avatar_url", "public"."users"."settings", "public"."users"."role"::text, "public"."users"."is_active", "public"."users"."created_at", "public"."users"."updated_at" FROM "public"."users" WHERE ("public"."users"."email" = $1 AND 1=1) LIMIT $2 OFFSET $3
+prisma:query INSERT INTO "public"."users" ("id","email","password_hash","first_name","last_name","settings","role","is_active","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,CAST($7::text AS "public"."Role"),$8,$9,$10) RETURNING "public"."users"."id", "public"."users"."email", "public"."users"."password_hash", "public"."users"."first_name", "public"."users"."last_name", "public"."users"."avatar_url", "public"."users"."settings", "public"."users"."role"::text, "public"."users"."is_active", "public"."users"."created_at", "public"."users"."updated_at"
+[0mPOST /api/v1/auth/register [32m201[0m 350.927 ms - 413[0m
+prisma:query SELECT 1
+prisma:query SELECT "public"."users"."id", "public"."users"."email", "public"."users"."password_hash", "public"."users"."first_name", "public"."users"."last_name", "public"."users"."avatar_url", "public"."users"."settings", "public"."users"."role"::text, "public"."users"."is_active", "public"."users"."created_at", "public"."users"."updated_at" FROM "public"."users" WHERE ("public"."users"."email" = $1 AND 1=1) LIMIT $2 OFFSET $3
+[0mPOST /api/v1/auth/login [33m401[0m 3.310 ms - 37[0m
+prisma:query SELECT "public"."users"."id", "public"."users"."email", "public"."users"."password_hash", "public"."users"."first_name", "public"."users"."last_name", "public"."users"."avatar_url", "public"."users"."settings", "public"."users"."role"::text, "public"."users"."is_active", "public"."users"."created_at", "public"."users"."updated_at" FROM "public"."users" WHERE ("public"."users"."email" = $1 AND 1=1) LIMIT $2 OFFSET $3
+prisma:query INSERT INTO "public"."users" ("id","email","password_hash","first_name","last_name","settings","role","is_active","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,CAST($7::text AS "public"."Role"),$8,$9,$10) RETURNING "public"."users"."id", "public"."users"."email", "public"."users"."password_hash", "public"."users"."first_name", "public"."users"."last_name", "public"."users"."avatar_url", "public"."users"."settings", "public"."users"."role"::text, "public"."users"."is_active", "public"."users"."created_at", "public"."users"."updated_at"
+[0mPOST /api/v1/auth/register [32m201[0m 242.076 ms - 409[0m
+prisma:query BEGIN
+prisma:query INSERT INTO "public"."workout_logs" ("id","user_id","sport_id","title","data","log_date","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING "public"."workout_logs"."id", "public"."workout_logs"."user_id", "public"."workout_logs"."sport_id", "public"."workout_logs"."title", "public"."workout_logs"."notes", "public"."workout_logs"."data", "public"."workout_logs"."log_date", "public"."workout_logs"."created_at", "public"."workout_logs"."updated_at"
+prisma:error 
+Invalid `tx.workoutLog.create()` invocation in
+/app/dist/repositories/workout.repository.js:23:49
+
+  20 const createdLogs = [];
+  21 for (const workout of workouts) {
+  22     // 1. Create the WorkoutLog
+ÔåÆ 23     const log = await tx.workoutLog.create(
+Foreign key constraint violated on the constraint: `workout_logs_sport_id_fkey`
+prisma:query ROLLBACK
+[0mPOST /api/v1/workouts/sync [31m500[0m 20.900 ms - 355[0m
+prisma:query BEGIN
+prisma:query INSERT INTO "public"."workout_logs" ("id","user_id","sport_id","title","data","log_date","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING "public"."workout_logs"."id", "public"."workout_logs"."user_id", "public"."workout_logs"."sport_id", "public"."workout_logs"."title", "public"."workout_logs"."notes", "public"."workout_logs"."data", "public"."workout_logs"."log_date", "public"."workout_logs"."created_at", "public"."workout_logs"."updated_at"
+prisma:error 
+Invalid `tx.workoutLog.create()` invocation in
+/app/dist/repositories/workout.repository.js:23:49
+
+  20 const createdLogs = [];
+  21 for (const workout of workouts) {
+  22     // 1. Create the WorkoutLog
+ÔåÆ 23     const log = await tx.workoutLog.create(
+Foreign key constraint violated on the constraint: `workout_logs_sport_id_fkey`
+prisma:query ROLLBACK
+[0mPOST /api/v1/workouts/sync [31m500[0m 8.176 ms - 355[0m
+prisma:query BEGIN
+prisma:query INSERT INTO "public"."workout_logs" ("id","user_id","sport_id","title","data","log_date","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING "public"."workout_logs"."id", "public"."workout_logs"."user_id", "public"."workout_logs"."sport_id", "public"."workout_logs"."title", "public"."workout_logs"."notes", "public"."workout_logs"."data", "public"."workout_logs"."log_date", "public"."workout_logs"."created_at", "public"."workout_logs"."updated_at"
+prisma:error 
+Invalid `tx.workoutLog.create()` invocation in
+/app/dist/repositories/workout.repository.js:23:49
+
+  20 const createdLogs = [];
+  21 for (const workout of workouts) {
+  22     // 1. Create the WorkoutLog
+ÔåÆ 23     const log = await tx.workoutLog.create(
+Foreign key constraint violated on the constraint: `workout_logs_sport_id_fkey`
+prisma:query ROLLBACK
+[0mPOST /api/v1/workouts/sync [31m500[0m 6.385 ms - 355[0m
+prisma:query BEGIN
+prisma:query INSERT INTO "public"."workout_logs" ("id","user_id","sport_id","title","data","log_date","created_at","updated_at") VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING "public"."workout_logs"."id", "public"."workout_logs"."user_id", "public"."workout_logs"."sport_id", "public"."workout_logs"."title", "public"."workout_logs"."notes", "public"."workout_logs"."data", "public"."workout_logs"."log_date", "public"."workout_logs"."created_at", "public"."workout_logs"."updated_at"
+prisma:error 
+Invalid `tx.workoutLog.create()` invocation in
+/app/dist/repositories/workout.repository.js:23:49
+
+  20 const createdLogs = [];
+  21 for (const workout of workouts) {
+  22     // 1. Create the WorkoutLog
+ÔåÆ 23     const log = await tx.workoutLog.create(
+Foreign key constraint violated on the constraint: `workout_logs_sport_id_fkey`
+prisma:query ROLLBACK
+[0mPOST /api/v1/workouts/sync [31m500[0m 6.532 ms - 355[0m
+
