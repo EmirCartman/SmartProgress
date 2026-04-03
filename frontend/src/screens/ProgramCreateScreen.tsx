@@ -1,8 +1,8 @@
 // ─────────────────────────────────────────────
-// Program Create Screen
-// Create custom workout programs with target sets
+// Program Create Screen — Cycle Builder
+// Frekans seçimi + çok günlü program oluşturma
 // ─────────────────────────────────────────────
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
     View,
     Text,
@@ -15,145 +15,353 @@ import {
     Platform,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
+import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../navigation/RootNavigator";
 import { programApi, parseApiError } from "../services/api";
+import type { TargetExercise, TargetSet } from "../types/workout";
 import {
-    colors,
     spacing,
     borderRadius,
     fontSize,
     fontWeight,
 } from "../constants/theme";
+import { useTheme } from "../hooks/ThemeContext";
 
-// ─── Types ───────────────────────────────────
+// ─── Helpers ─────────────────────────────────
 
-interface TargetSet {
-    targetReps: string;
+const FREQUENCY_OPTIONS = [2, 3, 4, 5, 6, 7];
+
+function makeDay(index: number): ProgramDay {
+    return { label: `Gün ${index + 1}`, exercises: [] };
 }
 
-interface TargetExercise {
-    id: string;
-    name: string;
-    targetSets: TargetSet[];
+/** Auto-template: N workout days + 1 rest day */
+function generateTemplate(freq: number): ProgramDay[] {
+    const template: ProgramDay[] = [];
+    for (let i = 0; i < freq; i++) {
+        template.push({ label: `Gün ${i + 1}`, exercises: [] });
+    }
+    template.push({ label: "Dinlenme", isRestDay: true, exercises: [] });
+    return template;
 }
+
+function makeExercise(): TargetExercise {
+    return { id: Math.random().toString(36).slice(2), name: "", targetSets: [{ targetReps: "" }] };
+}
+
+function makeWarmupSet(): TargetSet {
+    return { targetReps: "", isWarmup: true };
+}
+
+function makeWorkingSet(): TargetSet {
+    return { targetReps: "", isWarmup: false };
+}
+
+// ─── Local Types ─────────────────────────────
+
+interface ProgramDay {
+    label: string;
+    exercises: TargetExercise[];
+    isRestDay?: boolean;
+}
+
+// ─── Screen ──────────────────────────────────
 
 export default function ProgramCreateScreen() {
     const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+    const route = useRoute<RouteProp<RootStackParamList, "ProgramCreate">>();
+    const { colors } = useTheme();
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
+
+    // Edit mode params
+    const editProgramId = route.params?.editProgramId;
+    const editProgramData = route.params?.editProgramData;
+    const isEditMode = !!editProgramId;
 
     const [name, setName] = useState("");
     const [description, setDescription] = useState("");
-    const [exercises, setExercises] = useState<TargetExercise[]>([]);
+    const [frequency, setFrequency] = useState(3);
+    const [days, setDays] = useState<ProgramDay[]>(generateTemplate(3));
+    const [activeDayIdx, setActiveDayIdx] = useState(0);
     const [isSaving, setIsSaving] = useState(false);
+    const [showRPE, setShowRPE] = useState(false);
+    const [showRIR, setShowRIR] = useState(false);
 
-    // ─── Actions ─────────────────────────────────
+    // Pre-populate fields in edit mode
+    useEffect(() => {
+        if (isEditMode && editProgramData) {
+            setName(editProgramData.name || "");
+            setDescription(editProgramData.description || "");
+            const freq = editProgramData.data?.frequency || editProgramData.frequency || 3;
+            setFrequency(freq);
+            const rawDays = editProgramData.data?.days || editProgramData.days || [];
+            if (rawDays.length > 0) {
+                setDays(rawDays.map((d: any) => ({
+                    label: d.label || "",
+                    isRestDay: !!d.isRestDay,
+                    exercises: (d.exercises || []).map((ex: any) => ({
+                        id: ex.id || Math.random().toString(36).slice(2),
+                        name: ex.name || "",
+                        targetSets: (ex.targetSets || []).map((s: any) => ({
+                            targetReps: s.targetReps || "",
+                            targetWeight: s.targetWeight,
+                            targetRPE: s.targetRPE,
+                            targetRIR: s.targetRIR,
+                            isWarmup: !!s.isWarmup,
+                        })),
+                    })),
+                })));
+            }
+        }
+    }, []);
+
+    // --- Frequency deviation warning ---
+    const workoutDayCount = days.filter((d) => !d.isRestDay).length;
+    const isFrequencyMismatch = workoutDayCount !== frequency;
+
+    const handleFrequencyChange = (f: number) => {
+        setFrequency(f);
+        // Auto-generate template when frequency changes
+        const newDays = generateTemplate(f);
+        setDays(newDays);
+        setActiveDayIdx(0);
+    };
+
+    // ─── Day Management ───────────────────────
+
+    const addDay = () => {
+        setDays((prev) => {
+            const next = [...prev, makeDay(prev.length)];
+            setActiveDayIdx(next.length - 1);
+            return next;
+        });
+    };
+
+    const removeDay = (index: number) => {
+        if (days.length === 1) {
+            Alert.alert("Hata", "En az bir gün olmalıdır.");
+            return;
+        }
+        setDays((prev) => {
+            const next = prev.filter((_, i) => i !== index);
+            setActiveDayIdx(Math.min(activeDayIdx, next.length - 1));
+            return next;
+        });
+    };
+
+    const updateDayLabel = (index: number, label: string) => {
+        setDays((prev) => prev.map((d, i) => (i === index ? { ...d, label } : d)));
+    };
+
+    // ─── Exercise Management ──────────────────
 
     const addExercise = () => {
-        setExercises((prev) => [
-            ...prev,
-            {
-                id: Math.random().toString(),
-                name: "",
-                targetSets: [{ targetReps: "" }],
-            },
-        ]);
-    };
-
-    const updateExerciseName = (id: string, newName: string) => {
-        setExercises((prev) =>
-            prev.map((e) => (e.id === id ? { ...e, name: newName } : e))
-        );
-    };
-
-    const addSetToExercise = (exerciseId: string) => {
-        setExercises((prev) =>
-            prev.map((e) =>
-                e.id === exerciseId
-                    ? { ...e, targetSets: [...e.targetSets, { targetReps: "" }] }
-                    : e
+        setDays((prev) =>
+            prev.map((d, i) =>
+                i === activeDayIdx
+                    ? { ...d, exercises: [...d.exercises, makeExercise()] }
+                    : d
             )
         );
     };
 
-    const updateTargetReps = (exerciseId: string, setIndex: number, reps: string) => {
-        setExercises((prev) =>
-            prev.map((e) => {
-                if (e.id !== exerciseId) return e;
-                const newSets = [...e.targetSets];
-                newSets[setIndex].targetReps = reps;
-                return { ...e, targetSets: newSets };
+    const updateExerciseName = (exId: string, exName: string) => {
+        setDays((prev) =>
+            prev.map((d, i) =>
+                i === activeDayIdx
+                    ? {
+                        ...d,
+                        exercises: d.exercises.map((e) =>
+                            e.id === exId ? { ...e, name: exName } : e
+                        ),
+                    }
+                    : d
+            )
+        );
+    };
+
+    const removeExercise = (exId: string) => {
+        setDays((prev) =>
+            prev.map((d, i) =>
+                i === activeDayIdx
+                    ? { ...d, exercises: d.exercises.filter((e) => e.id !== exId) }
+                    : d
+            )
+        );
+    };
+
+    const toggleRestDay = () => {
+        setDays((prev) =>
+            prev.map((d, i) =>
+                i === activeDayIdx
+                    ? { ...d, isRestDay: !d.isRestDay, exercises: !d.isRestDay ? [] : d.exercises }
+                    : d
+            )
+        );
+    };
+
+    // ─── Set Management ───────────────────────
+
+    const addSet = (exId: string, isWarmup: boolean = false) => {
+        setDays((prev) =>
+            prev.map((d, i) =>
+                i === activeDayIdx
+                    ? {
+                        ...d,
+                        exercises: d.exercises.map((e) =>
+                            e.id === exId
+                                ? { ...e, targetSets: [...e.targetSets, isWarmup ? makeWarmupSet() : makeWorkingSet()] }
+                                : e
+                        ),
+                    }
+                    : d
+            )
+        );
+    };
+
+    const removeSet = (exId: string, setIdx: number) => {
+        setDays((prev) =>
+            prev.map((d, i) =>
+                i === activeDayIdx
+                    ? {
+                        ...d,
+                        exercises: d.exercises.map((e) =>
+                            e.id === exId
+                                ? { ...e, targetSets: e.targetSets.filter((_, si) => si !== setIdx) }
+                                : e
+                        ),
+                    }
+                    : d
+            )
+        );
+    };
+
+    const updateSet = (exId: string, setIdx: number, patch: Partial<TargetSet>) => {
+        // RPE max clamp to 10
+        if (patch.targetRPE) {
+            const num = parseFloat(patch.targetRPE);
+            if (!isNaN(num) && num > 10) patch = { ...patch, targetRPE: "10" };
+        }
+        setDays((prev) =>
+            prev.map((d, i) =>
+                i === activeDayIdx
+                    ? {
+                        ...d,
+                        exercises: d.exercises.map((e) => {
+                            if (e.id !== exId) return e;
+                            const newSets = [...e.targetSets];
+                            newSets[setIdx] = { ...newSets[setIdx], ...patch };
+                            return { ...e, targetSets: newSets };
+                        }),
+                    }
+                    : d
+            )
+        );
+    };
+
+    const reorderSet = (exId: string, fromIdx: number, direction: "up" | "down") => {
+        setDays((prev) =>
+            prev.map((d, i) => {
+                if (i !== activeDayIdx) return d;
+                return {
+                    ...d,
+                    exercises: d.exercises.map((e) => {
+                        if (e.id !== exId) return e;
+                        const sets = [...e.targetSets];
+                        const toIdx = direction === "up" ? fromIdx - 1 : fromIdx + 1;
+                        if (toIdx < 0 || toIdx >= sets.length) return e;
+                        [sets[fromIdx], sets[toIdx]] = [sets[toIdx], sets[fromIdx]];
+                        return { ...e, targetSets: sets };
+                    }),
+                };
             })
         );
     };
 
-    const removeSet = (exerciseId: string, setIndex: number) => {
-        setExercises((prev) =>
-            prev.map((e) => {
-                if (e.id !== exerciseId) return e;
-                const newSets = e.targetSets.filter((_, idx) => idx !== setIndex);
-                return { ...e, targetSets: newSets };
-            })
-        );
-    };
+    // ─── Validation & Save ────────────────────
 
-    const removeExercise = (exerciseId: string) => {
-        setExercises((prev) => prev.filter((e) => e.id !== exerciseId));
-    };
-
-    // ─── Submit ──────────────────────────────────
-
-    const handleSave = async () => {
+    const handleSave = () => {
         if (!name.trim()) {
             Alert.alert("Hata", "Lütfen programa bir isim verin.");
             return;
         }
-
-        if (exercises.length === 0) {
-            Alert.alert("Hata", "En az bir egzersiz eklemelisiniz.");
+        const hasExercises = days.some((d) => d.exercises.length > 0);
+        if (!hasExercises) {
+            Alert.alert("Hata", "En az bir güne egzersiz ekleyin.");
             return;
         }
+        for (const day of days) {
+            if (day.isRestDay) continue;
 
-        // Validate
-        for (const ex of exercises) {
-            if (!ex.name.trim()) {
-                Alert.alert("Hata", "Tüm egzersizlerin bir ismi olmalı.");
-                return;
-            }
-            if (ex.targetSets.length === 0) {
-                Alert.alert("Hata", `"${ex.name}" için en az bir set ekleyin.`);
-                return;
-            }
-            for (const s of ex.targetSets) {
-                if (!s.targetReps.trim()) {
-                    Alert.alert("Hata", `"${ex.name}" egzersizinin eksik tekrar hedefleri var.`);
+            for (const ex of day.exercises) {
+                if (!ex.name.trim()) {
+                    Alert.alert("Hata", `${day.label}: Tüm egzersizlerin ismi olmalı.`);
                     return;
+                }
+                if (ex.targetSets.length === 0) {
+                    Alert.alert("Hata", `"${ex.name}" için en az bir set ekleyin.`);
+                    return;
+                }
+                for (const s of ex.targetSets) {
+                    if (!s.targetReps.trim()) {
+                        Alert.alert("Hata", `"${ex.name}" egzersizinin eksik tekrar hedefleri var.`);
+                        return;
+                    }
                 }
             }
         }
+        Alert.alert(
+            "Gizlilik Ayarı",
+            "Bu programı herkese açık mı yoksa özel mi kaydetmek istersiniz?",
+            [
+                { text: "Özel", onPress: () => doSave(false) },
+                { text: "Herkese Açık", onPress: () => doSave(true) },
+                { text: "İptal", style: "cancel" },
+            ]
+        );
+    };
 
+    const doSave = async (isPublic: boolean) => {
         try {
             setIsSaving(true);
-
-            // Format data for DB JSON
             const programData = {
-                exercises: exercises.map(ex => ({
-                    name: ex.name,
-                    sets: ex.targetSets.map(set => ({
-                        targetReps: parseInt(set.targetReps, 10) || 0
-                    }))
-                }))
+                frequency,
+                days: days.map((d) => ({
+                    label: d.label,
+                    isRestDay: !!d.isRestDay,
+                    exercises: d.isRestDay ? [] : d.exercises.map((ex) => ({
+                        id: ex.id,
+                        name: ex.name,
+                        targetSets: ex.targetSets.map((s) => ({
+                            targetReps: s.targetReps,
+                            targetWeight: s.targetWeight || undefined,
+                            targetRPE: s.targetRPE || undefined,
+                            targetRIR: s.targetRIR || undefined,
+                            isWarmup: !!s.isWarmup,
+                        })),
+                    })),
+                })),
             };
 
-            await programApi.create({
-                name: name.trim(),
-                description: description.trim(),
-                isPublic: false,
-                data: programData,
-            });
-
+            if (isEditMode && editProgramId) {
+                await programApi.update(editProgramId, {
+                    name: name.trim(),
+                    description: description.trim(),
+                    isPublic,
+                    frequency,
+                    data: programData,
+                });
+            } else {
+                await programApi.create({
+                    name: name.trim(),
+                    description: description.trim(),
+                    isPublic,
+                    frequency,
+                    data: programData,
+                });
+            }
             navigation.goBack();
-
         } catch (error) {
             const apiError = parseApiError(error);
             Alert.alert("Kaydetme Hatası", apiError.message);
@@ -162,19 +370,22 @@ export default function ProgramCreateScreen() {
         }
     };
 
-    // ─── Render ──────────────────────────────────
+    const activeDay = days[activeDayIdx];
+
+    // ─── Render ──────────────────────────────
 
     return (
         <KeyboardAvoidingView
             style={styles.root}
-            behavior={Platform.OS === "ios" ? "padding" : undefined}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            keyboardVerticalOffset={Platform.OS === "ios" ? 10 : 80}
         >
-            {/* Header */}
+            {/* ── Header ── */}
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
                     <Ionicons name="close" size={28} color={colors.text} />
                 </TouchableOpacity>
-                <Text style={styles.headerTitle}>Yeni Program</Text>
+                <Text style={styles.headerTitle}>{isEditMode ? "Programı Düzenle" : "Yeni Program"}</Text>
                 <TouchableOpacity onPress={handleSave} disabled={isSaving} style={styles.iconBtn}>
                     <Ionicons
                         name="checkmark"
@@ -184,22 +395,21 @@ export default function ProgramCreateScreen() {
                 </TouchableOpacity>
             </View>
 
-            <ScrollView contentContainerStyle={styles.scrollContent}>
+            <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
 
-                {/* Meta Inputs */}
+                {/* ── Meta ── */}
                 <View style={styles.metaCard}>
                     <Text style={styles.label}>Program Adı *</Text>
                     <TextInput
                         style={styles.input}
-                        placeholder="Örn: İtme Günü (Push Day)"
+                        placeholder="Örn: Push/Pull/Legs"
                         placeholderTextColor={colors.textSecondary}
                         value={name}
                         onChangeText={setName}
                     />
-
                     <Text style={[styles.label, { marginTop: spacing.md }]}>Açıklama (Opsiyonel)</Text>
                     <TextInput
-                        style={[styles.input, { height: 80 }]}
+                        style={[styles.input, { height: 72 }]}
                         placeholder="Programın amacı, notlar..."
                         placeholderTextColor={colors.textSecondary}
                         value={description}
@@ -208,73 +418,309 @@ export default function ProgramCreateScreen() {
                     />
                 </View>
 
-                {/* Exercises List */}
-                <View style={styles.exercisesSection}>
-                    <Text style={styles.sectionTitle}>Egzersizler ve Hedefler</Text>
-
-                    {exercises.map((exercise, exIndex) => (
-                        <View key={exercise.id} style={styles.exerciseCard}>
-                            <View style={styles.exHeader}>
-                                <Text style={styles.exNumber}>#{exIndex + 1}</Text>
-                                <TextInput
-                                    style={styles.exNameInput}
-                                    placeholder="Egzersiz Adı (Örn: Bench Press)"
-                                    placeholderTextColor={colors.textSecondary}
-                                    value={exercise.name}
-                                    onChangeText={(txt) => updateExerciseName(exercise.id, txt)}
-                                />
-                                <TouchableOpacity onPress={() => removeExercise(exercise.id)}>
-                                    <Ionicons name="trash-outline" size={22} color={colors.error} />
-                                </TouchableOpacity>
-                            </View>
-
-                            <View style={styles.setsContainer}>
-                                {exercise.targetSets.map((set, setIndex) => (
-                                    <View key={setIndex} style={styles.setRow}>
-                                        <Text style={styles.setLabel}>Set {setIndex + 1}</Text>
-                                        <View style={styles.targetInputContainer}>
-                                            <TextInput
-                                                style={styles.targetInput}
-                                                placeholder="Hedef Tekrar (örn: 10)"
-                                                placeholderTextColor={colors.textSecondary}
-                                                keyboardType="numeric"
-                                                value={set.targetReps}
-                                                onChangeText={(txt) => updateTargetReps(exercise.id, setIndex, txt)}
-                                            />
-                                        </View>
-                                        <TouchableOpacity
-                                            onPress={() => removeSet(exercise.id, setIndex)}
-                                            style={styles.removeSetBtn}
-                                        >
-                                            <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
-                                        </TouchableOpacity>
-                                    </View>
-                                ))}
-                            </View>
-
+                {/* ── Frequency Selector ── */}
+                <View style={styles.sectionCard}>
+                    <Text style={styles.sectionTitle}>🗓 Haftalık Frekans</Text>
+                    <Text style={styles.sectionSubtitle}>Haftada kaç gün antrenman yapacaksın?</Text>
+                    <View style={styles.freqRow}>
+                        {FREQUENCY_OPTIONS.map((f) => (
                             <TouchableOpacity
-                                style={styles.addSetBtn}
-                                onPress={() => addSetToExercise(exercise.id)}
+                                key={f}
+                                style={[
+                                    styles.freqChip,
+                                    frequency === f && styles.freqChipActive,
+                                ]}
+                                onPress={() => handleFrequencyChange(f)}
+                                activeOpacity={0.75}
                             >
-                                <Ionicons name="add" size={18} color={colors.accent} />
-                                <Text style={styles.addSetText}>Set Ekle</Text>
+                                <Text
+                                    style={[
+                                        styles.freqChipText,
+                                        frequency === f && styles.freqChipTextActive,
+                                    ]}
+                                >
+                                    {f}
+                                </Text>
+                                <Text
+                                    style={[
+                                        styles.freqChipSub,
+                                        frequency === f && { color: colors.background },
+                                    ]}
+                                >
+                                    gün
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+
+                {/* ── Day Tabs ── */}
+                <View style={styles.sectionCard}>
+                    <Text style={styles.sectionTitle}>🏋️ Antrenman Günleri</Text>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.dayTabsScroll}
+                        contentContainerStyle={styles.dayTabsContent}
+                    >
+                        {days.map((day, idx) => (
+                            <TouchableOpacity
+                                key={idx}
+                                style={[styles.dayTab, activeDayIdx === idx && styles.dayTabActive]}
+                                onPress={() => setActiveDayIdx(idx)}
+                            >
+                                <Text
+                                    style={[
+                                        styles.dayTabText,
+                                        activeDayIdx === idx && styles.dayTabTextActive,
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    {day.label}
+                                </Text>
+                                {day.isRestDay ? (
+                                    <View style={[styles.dayTabBadge, { backgroundColor: colors.textMuted }]}>
+                                        <Ionicons name="bed" size={10} color={colors.background} />
+                                    </View>
+                                ) : day.exercises.length > 0 ? (
+                                    <View style={styles.dayTabBadge}>
+                                        <Text style={styles.dayTabBadgeText}>{day.exercises.length}</Text>
+                                    </View>
+                                ) : null}
+                            </TouchableOpacity>
+                        ))}
+                        <TouchableOpacity style={styles.addDayBtn} onPress={addDay}>
+                            <Ionicons name="add" size={20} color={colors.accent} />
+                        </TouchableOpacity>
+                    </ScrollView>
+
+                    {/* Active day label editor */}
+                    <View style={styles.dayLabelRow}>
+                        <TextInput
+                            style={styles.dayLabelInput}
+                            value={activeDay.label}
+                            onChangeText={(t) => updateDayLabel(activeDayIdx, t)}
+                            placeholder="Örn: Gün 1 — Anterior"
+                            placeholderTextColor={colors.textSecondary}
+                        />
+                        {days.length > 1 && (
+                            <TouchableOpacity
+                                style={styles.removeDayBtn}
+                                onPress={() => removeDay(activeDayIdx)}
+                            >
+                                <Ionicons name="trash-outline" size={18} color={colors.error} />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                    {/* Frequency deviation warning */}
+                    {isFrequencyMismatch && (
+                        <View style={styles.warningBanner}>
+                            <Ionicons name="warning-outline" size={16} color="#F59E0B" />
+                            <Text style={styles.warningText}>
+                                Seçtiğiniz frekans ({frequency}) ile antrenman gün sayısı ({workoutDayCount}) uyuşmuyor.
+                            </Text>
+                        </View>
+                    )}
+                </View>
+
+                {/* ── Exercises for Active Day ── */}
+                <View style={styles.sectionCard}>
+                    <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: spacing.xs }}>
+                        <Text style={[styles.sectionTitle, { marginBottom: 0 }]}>
+                            Egzersizler — {activeDay.label}
+                        </Text>
+                        <TouchableOpacity
+                            style={{ flexDirection: "row", alignItems: "center", gap: 4 }}
+                            onPress={toggleRestDay}
+                        >
+                            <Ionicons
+                                name={activeDay.isRestDay ? "checkbox" : "square-outline"}
+                                size={20}
+                                color={activeDay.isRestDay ? colors.accent : colors.textSecondary}
+                            />
+                            <Text style={{ fontSize: fontSize.sm, color: activeDay.isRestDay ? colors.accent : colors.textSecondary }}>Dinlenme Günü</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {/* RPE/RIR Toggle Buttons */}
+                    {!activeDay.isRestDay && (
+                        <View style={{ flexDirection: "row", gap: spacing.sm, marginBottom: spacing.md }}>
+                            <TouchableOpacity
+                                style={[{
+                                    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+                                    paddingVertical: spacing.sm, borderRadius: borderRadius.sm,
+                                    borderWidth: 1.5,
+                                    borderColor: showRPE ? colors.accent : colors.border,
+                                    backgroundColor: showRPE ? colors.accentMuted : "transparent",
+                                    gap: spacing.xs,
+                                }]}
+                                onPress={() => setShowRPE(!showRPE)}
+                            >
+                                <Ionicons name={showRPE ? "checkbox" : "square-outline"} size={16} color={showRPE ? colors.accent : colors.textMuted} />
+                                <Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: showRPE ? colors.accent : colors.textMuted }}>RPE</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[{
+                                    flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center",
+                                    paddingVertical: spacing.sm, borderRadius: borderRadius.sm,
+                                    borderWidth: 1.5,
+                                    borderColor: showRIR ? colors.accent : colors.border,
+                                    backgroundColor: showRIR ? colors.accentMuted : "transparent",
+                                    gap: spacing.xs,
+                                }]}
+                                onPress={() => setShowRIR(!showRIR)}
+                            >
+                                <Ionicons name={showRIR ? "checkbox" : "square-outline"} size={16} color={showRIR ? colors.accent : colors.textMuted} />
+                                <Text style={{ fontSize: fontSize.sm, fontWeight: fontWeight.semibold, color: showRIR ? colors.accent : colors.textMuted }}>RIR</Text>
                             </TouchableOpacity>
                         </View>
-                    ))}
+                    )}
 
-                    {/* Add Exercise BTN */}
-                    <TouchableOpacity style={styles.addExerciseBtn} onPress={addExercise}>
-                        <Ionicons name="barbell-outline" size={20} color={colors.background} />
-                        <Text style={styles.addExerciseText}>Yeni Egzersiz Ekle</Text>
-                    </TouchableOpacity>
+                    {activeDay.isRestDay ? (
+                        <View style={{ paddingVertical: spacing.xxl, alignItems: "center" }}>
+                            <Ionicons name="bed-outline" size={48} color={colors.textMuted} style={{ marginBottom: spacing.sm }} />
+                            <Text style={{ color: colors.textSecondary, fontSize: fontSize.md }}>Bugün dinlenme günü olarak işaretlendi.</Text>
+                            <Text style={{ color: colors.textMuted, fontSize: fontSize.sm, textAlign: "center", marginTop: spacing.xs }}>Egzersiz eklemek için yukarıdan işareti kaldırın.</Text>
+                        </View>
+                    ) : (
+                        <>
+                            {activeDay.exercises.map((exercise, exIndex) => (
+                                <View key={exercise.id} style={styles.exerciseCard}>
+                                    <View style={styles.exHeader}>
+                                        <Text style={styles.exNumber}>#{exIndex + 1}</Text>
+                                        <TextInput
+                                            style={styles.exNameInput}
+                                            placeholder="Egzersiz Adı (Örn: Bench Press)"
+                                            placeholderTextColor={colors.textSecondary}
+                                            value={exercise.name}
+                                            onChangeText={(t) => updateExerciseName(exercise.id, t)}
+                                        />
+                                        <TouchableOpacity onPress={() => removeExercise(exercise.id)}>
+                                            <Ionicons name="trash-outline" size={22} color={colors.error} />
+                                        </TouchableOpacity>
+                                    </View>
 
+                                    {(() => {
+                                        let warmupCount = 0;
+                                        let workingCount = 0;
+                                        return exercise.targetSets.map((set, setIndex) => {
+                                            const isWarmup = !!set.isWarmup;
+                                            if (isWarmup) warmupCount++;
+                                            else workingCount++;
+                                            const label = isWarmup ? `W${warmupCount}` : `${workingCount}`;
+                                            return (
+                                        <View key={setIndex} style={styles.setRow}>
+                                            <TouchableOpacity
+                                                onLongPress={() => {}}
+                                                style={{ justifyContent: "center", marginRight: 2 }}
+                                            >
+                                                <TouchableOpacity
+                                                    onPress={() => reorderSet(exercise.id, setIndex, "up")}
+                                                    disabled={setIndex === 0}
+                                                    hitSlop={{ top: 4, bottom: 2, left: 4, right: 4 }}
+                                                >
+                                                    <Ionicons name="chevron-up" size={14} color={setIndex === 0 ? colors.border : colors.textSecondary} />
+                                                </TouchableOpacity>
+                                                <TouchableOpacity
+                                                    onPress={() => reorderSet(exercise.id, setIndex, "down")}
+                                                    disabled={setIndex === exercise.targetSets.length - 1}
+                                                    hitSlop={{ top: 2, bottom: 4, left: 4, right: 4 }}
+                                                >
+                                                    <Ionicons name="chevron-down" size={14} color={setIndex === exercise.targetSets.length - 1 ? colors.border : colors.textSecondary} />
+                                                </TouchableOpacity>
+                                            </TouchableOpacity>
+                                            <Text style={[styles.setLabel, isWarmup && { color: colors.textMuted, fontStyle: "italic" as const }]}>
+                                                {label}
+                                            </Text>
+
+                                            <View style={styles.setInputGroup}>
+                                                <View style={styles.setCol}>
+                                                    <Text style={styles.setColLabel}>Tekrar</Text>
+                                                    <TextInput
+                                                        style={styles.setInput}
+                                                        placeholder="8-12"
+                                                        placeholderTextColor={colors.textSecondary}
+                                                        keyboardType="number-pad"
+                                                        value={set.targetReps}
+                                                        onChangeText={(t) => updateSet(exercise.id, setIndex, { targetReps: t })}
+                                                    />
+                                                </View>
+                                                {showRPE && (
+                                                    <View style={styles.setCol}>
+                                                        <Text style={styles.setColLabel}>RPE</Text>
+                                                        <TextInput
+                                                            style={styles.setInput}
+                                                            placeholder="8"
+                                                            placeholderTextColor={colors.textSecondary}
+                                                            keyboardType="numeric"
+                                                            value={set.targetRPE || ""}
+                                                            onChangeText={(t) => updateSet(exercise.id, setIndex, { targetRPE: t })}
+                                                        />
+                                                    </View>
+                                                )}
+                                                {showRIR && (
+                                                    <View style={styles.setCol}>
+                                                        <Text style={styles.setColLabel}>RIR</Text>
+                                                        <TextInput
+                                                            style={styles.setInput}
+                                                            placeholder="2"
+                                                            placeholderTextColor={colors.textSecondary}
+                                                            value={set.targetRIR || ""}
+                                                            onChangeText={(t) => updateSet(exercise.id, setIndex, { targetRIR: t })}
+                                                        />
+                                                    </View>
+                                                )}
+                                            </View>
+
+                                            <TouchableOpacity
+                                                onPress={() => removeSet(exercise.id, setIndex)}
+                                                style={styles.removeSetBtn}
+                                            >
+                                                <Ionicons name="close-circle" size={20} color={colors.textSecondary} />
+                                            </TouchableOpacity>
+                                        </View>
+                                            );
+                                        });
+                                    })()}
+
+                                    <View style={{ flexDirection: "row", gap: spacing.sm, marginTop: spacing.xs }}>
+                                        <TouchableOpacity
+                                            style={[styles.addSetBtn, { flex: 1 }]}
+                                            onPress={() => addSet(exercise.id, true)}
+                                        >
+                                            <Ionicons name="flame-outline" size={14} color={colors.textMuted} />
+                                            <Text style={[styles.addSetText, { color: colors.textMuted }]}>Isınma Seti</Text>
+                                        </TouchableOpacity>
+                                        <TouchableOpacity
+                                            style={[styles.addSetBtn, { flex: 1 }]}
+                                            onPress={() => addSet(exercise.id, false)}
+                                        >
+                                            <Ionicons name="add" size={16} color={colors.accent} />
+                                            <Text style={styles.addSetText}>Çalışma Seti</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                </View>
+                            ))}
+
+                            {/* Add Exercise Button */}
+                            <TouchableOpacity style={styles.addExerciseBtn} onPress={addExercise}>
+                                <Ionicons name="barbell-outline" size={20} color={colors.background} />
+                                <Text style={styles.addExerciseText}>Egzersiz Ekle</Text>
+                            </TouchableOpacity>
+                        </>
+                    )}
                 </View>
+
+                <View style={{ height: 80 }} />
             </ScrollView>
         </KeyboardAvoidingView>
     );
 }
 
-const styles = StyleSheet.create({
+// ─── Styles ─────────────────────────────────
+
+const createStyles = (colors: any) => StyleSheet.create({
     root: {
         flex: 1,
         backgroundColor: colors.background,
@@ -302,13 +748,21 @@ const styles = StyleSheet.create({
     },
     scrollContent: {
         padding: spacing.lg,
-        paddingBottom: 100, // extra padding for bottom scrolling
+        paddingBottom: 100,
     },
     metaCard: {
         backgroundColor: colors.surface,
         borderRadius: borderRadius.lg,
         padding: spacing.lg,
-        marginBottom: spacing.xl,
+        marginBottom: spacing.md,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    sectionCard: {
+        backgroundColor: colors.surface,
+        borderRadius: borderRadius.lg,
+        padding: spacing.lg,
+        marginBottom: spacing.md,
         borderWidth: 1,
         borderColor: colors.border,
     },
@@ -330,18 +784,131 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.md,
         fontSize: fontSize.md,
     },
-    exercisesSection: {
-        flex: 1,
-    },
     sectionTitle: {
-        fontSize: fontSize.xl,
+        fontSize: fontSize.lg,
         fontWeight: fontWeight.bold,
         color: colors.text,
+        marginBottom: spacing.xs,
+    },
+    sectionSubtitle: {
+        fontSize: fontSize.sm,
+        color: colors.textMuted,
         marginBottom: spacing.md,
     },
+    // Frequency
+    freqRow: {
+        flexDirection: "row",
+        gap: spacing.sm,
+        flexWrap: "wrap",
+    },
+    freqChip: {
+        alignItems: "center",
+        justifyContent: "center",
+        width: 48,
+        height: 56,
+        borderRadius: borderRadius.md,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1.5,
+        borderColor: colors.border,
+    },
+    freqChipActive: {
+        backgroundColor: colors.accent,
+        borderColor: colors.accent,
+    },
+    freqChipText: {
+        fontSize: fontSize.lg,
+        fontWeight: fontWeight.heavy,
+        color: colors.text,
+    },
+    freqChipTextActive: {
+        color: colors.background,
+    },
+    freqChipSub: {
+        fontSize: 10,
+        color: colors.textMuted,
+        marginTop: 1,
+    },
+    // Day Tabs
+    dayTabsScroll: {
+        marginBottom: spacing.md,
+    },
+    dayTabsContent: {
+        gap: spacing.sm,
+        paddingBottom: spacing.xs,
+    },
+    dayTab: {
+        flexDirection: "row",
+        alignItems: "center",
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: borderRadius.md,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.border,
+        gap: spacing.xs,
+        minHeight: 40,
+    },
+    dayTabActive: {
+        backgroundColor: colors.accentMuted,
+        borderColor: colors.accent,
+    },
+    dayTabText: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        color: colors.textSecondary,
+        maxWidth: 90,
+    },
+    dayTabTextActive: {
+        color: colors.accent,
+        fontWeight: fontWeight.bold,
+    },
+    dayTabBadge: {
+        width: 18,
+        height: 18,
+        borderRadius: 9,
+        backgroundColor: colors.accent,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    dayTabBadgeText: {
+        fontSize: 10,
+        fontWeight: fontWeight.bold,
+        color: colors.background,
+    },
+    addDayBtn: {
+        width: 40,
+        height: 40,
+        borderRadius: borderRadius.md,
+        borderWidth: 1.5,
+        borderColor: colors.accent,
+        borderStyle: "dashed",
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    dayLabelRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.sm,
+    },
+    dayLabelInput: {
+        flex: 1,
+        backgroundColor: colors.background,
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: borderRadius.md,
+        color: colors.accent,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.bold,
+    },
+    removeDayBtn: {
+        padding: spacing.sm,
+    },
+    // Exercises
     exerciseCard: {
-        backgroundColor: colors.surface,
-        borderRadius: borderRadius.lg,
+        backgroundColor: colors.background,
+        borderRadius: borderRadius.md,
         padding: spacing.md,
         marginBottom: spacing.md,
         borderWidth: 1,
@@ -357,6 +924,7 @@ const styles = StyleSheet.create({
         fontWeight: fontWeight.bold,
         color: colors.accent,
         marginRight: spacing.sm,
+        minWidth: 28,
     },
     exNameInput: {
         flex: 1,
@@ -368,33 +936,45 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.sm,
         marginRight: spacing.sm,
     },
-    setsContainer: {
-        marginBottom: spacing.md,
-    },
+    // Sets
     setRow: {
         flexDirection: "row",
         alignItems: "center",
         marginBottom: spacing.sm,
-        backgroundColor: colors.background,
-        padding: spacing.sm,
-        borderRadius: borderRadius.md,
+        gap: spacing.sm,
     },
     setLabel: {
-        fontSize: fontSize.md,
+        fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
         color: colors.textSecondary,
-        width: 60,
+        minWidth: 44,
     },
-    targetInputContainer: {
+    setInputGroup: {
         flex: 1,
         flexDirection: "row",
-        alignItems: "center",
+        gap: spacing.xs,
     },
-    targetInput: {
+    setCol: {
         flex: 1,
+        gap: 3,
+    },
+    setColLabel: {
+        fontSize: 10,
+        color: colors.textMuted,
+        fontWeight: fontWeight.medium,
+        textTransform: "uppercase",
+        textAlign: "center",
+    },
+    setInput: {
+        backgroundColor: colors.surfaceElevated,
         color: colors.text,
-        fontSize: fontSize.md,
-        padding: 0,
+        fontSize: fontSize.sm,
+        paddingHorizontal: spacing.xs,
+        paddingVertical: spacing.sm,
+        borderRadius: borderRadius.sm,
+        textAlign: "center",
+        borderWidth: 1,
+        borderColor: colors.borderLight,
     },
     removeSetBtn: {
         padding: spacing.xs,
@@ -408,12 +988,12 @@ const styles = StyleSheet.create({
         borderColor: colors.border,
         borderRadius: borderRadius.sm,
         borderStyle: "dashed",
+        gap: spacing.xs,
     },
     addSetText: {
-        fontSize: fontSize.md,
+        fontSize: fontSize.sm,
         fontWeight: fontWeight.medium,
         color: colors.textSecondary,
-        marginLeft: spacing.xs,
     },
     addExerciseBtn: {
         flexDirection: "row",
@@ -423,16 +1003,33 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.md,
         borderRadius: borderRadius.md,
         marginTop: spacing.sm,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 3.84,
+        gap: spacing.sm,
+        minHeight: 56,
+        shadowColor: colors.accent,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 8,
         elevation: 5,
     },
     addExerciseText: {
         fontSize: fontSize.lg,
         fontWeight: fontWeight.bold,
         color: colors.background,
-        marginLeft: spacing.sm,
+    },
+    warningBanner: {
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: "rgba(245,158,11,0.12)",
+        borderRadius: borderRadius.sm,
+        padding: spacing.md,
+        marginTop: spacing.md,
+        gap: spacing.sm,
+        borderWidth: 1,
+        borderColor: "rgba(245,158,11,0.3)",
+    },
+    warningText: {
+        flex: 1,
+        fontSize: fontSize.xs,
+        color: "#F59E0B",
     },
 });

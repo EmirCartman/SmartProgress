@@ -3,7 +3,8 @@
 // ─────────────────────────────────────────────
 import React, { ReactNode } from "react";
 import { View, StyleSheet, ViewStyle, StyleProp } from "react-native";
-import { colors, borderRadius, spacing } from "../constants/theme";
+import { borderRadius, spacing } from "../constants/theme";
+import { useTheme } from "../hooks/ThemeContext";
 
 interface GymCardProps {
     children: ReactNode;
@@ -12,6 +13,9 @@ interface GymCardProps {
 }
 
 export default function GymCard({ children, style, elevated = false }: GymCardProps) {
+    const { colors } = useTheme();
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
+
     return (
         <View
             style={[
@@ -25,7 +29,7 @@ export default function GymCard({ children, style, elevated = false }: GymCardPr
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
     card: {
         backgroundColor: colors.surface,
         borderRadius: borderRadius.lg,

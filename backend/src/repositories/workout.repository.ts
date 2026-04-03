@@ -106,6 +106,18 @@ export class WorkoutRepository {
             take: limit,
         });
     }
+
+    /**
+     * Delete a workout log by ID, ensuring it belongs to the user.
+     */
+    async deleteById(userId: string, id: string): Promise<void> {
+        await prisma.workoutLog.delete({
+            where: {
+                id,
+                userId,
+            },
+        });
+    }
 }
 
 export const workoutRepository = new WorkoutRepository();

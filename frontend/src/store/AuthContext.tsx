@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from "react";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { authApi, parseApiError } from "../services/api";
+import { authApi, parseApiError, setLogoutCallback } from "../services/api";
 
 // ─── Types ───────────────────────────────────
 
@@ -13,6 +13,7 @@ interface User {
     email: string;
     firstName: string;
     lastName: string;
+    profileImage?: string;
     role: string;
     settings: {
         is_auto_suggest_enabled: boolean;
@@ -35,6 +36,7 @@ interface AuthContextType extends AuthState {
         lastName: string;
     }) => Promise<void>;
     logout: () => Promise<void>;
+    updateUser: (partialUser: Record<string, any>) => Promise<void>;
 }
 
 // ─── Context ─────────────────────────────────
@@ -51,6 +53,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         isAuthenticated: false,
     });
 
+    // Register global 401 logout callback so Axios interceptor can reset context
+    useEffect(() => {
+        setLogoutCallback(() => {
+            setState({
+                user: null,
+                token: null,
+                isLoading: false,
+                isAuthenticated: false,
+            });
+        });
+    }, []);
+
     // Restore session from AsyncStorage on mount
     useEffect(() => {
         const restore = async () => {
@@ -65,41 +79,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         isAuthenticated: true,
                     });
                 } else {
-                    // ─── Development Auto-Login ──────────────────────
-                    // Since there is no Login UI yet, auto-register/login
-                    // a dummy dev user so API requests don't fail with 401
-                    try {
-                        let authData;
-                        try {
-                            const res = await authApi.login({ email: "dev@smartprogress.com", password: "password123" });
-                            authData = res.data;
-                        } catch {
-                            const res = await authApi.register({
-                                email: "dev@smartprogress.com",
-                                password: "password123",
-                                firstName: "Dev",
-                                lastName: "User",
-                            });
-                            authData = res.data;
-                        }
-
-                        await AsyncStorage.setItem("auth_token", authData.token);
-                        await AsyncStorage.setItem("user", JSON.stringify(authData.user));
-
-                        setState({
-                            user: authData.user,
-                            token: authData.token,
-                            isLoading: false,
-                            isAuthenticated: true,
-                        });
-                        console.log("[AuthContext] ✅ Development user automatically logged in");
-                    } catch (err) {
-                        console.error("[AuthContext] ❌ Auto-login failed:", err);
-                        setState((prev) => ({ ...prev, isLoading: false }));
-                    }
+                    // No stored session → show LoginScreen
+                    setState({
+                        user: null,
+                        token: null,
+                        isLoading: false,
+                        isAuthenticated: false,
+                    });
                 }
             } catch {
-                setState((prev) => ({ ...prev, isLoading: false }));
+                setState((prev) => ({ ...prev, isLoading: false, isAuthenticated: false }));
             }
         };
         restore();
@@ -165,8 +154,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
     }, []);
 
+    const updateUser = useCallback(async (partialUser: Record<string, any>) => {
+        setState((prev) => {
+            if (!prev.user) return prev;
+            const updatedUser = { ...prev.user, ...partialUser };
+            // Update storage asynchronously
+            AsyncStorage.setItem("user", JSON.stringify(updatedUser)).catch(console.error);
+            return { ...prev, user: updatedUser };
+        });
+    }, []);
+
     return (
-        <AuthContext.Provider value={{ ...state, login, register, logout }}>
+        <AuthContext.Provider value={{ ...state, login, register, logout, updateUser }}>
             {children}
         </AuthContext.Provider>
     );

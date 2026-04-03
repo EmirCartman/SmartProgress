@@ -12,5 +12,6 @@ router.use(authenticate);
 
 router.post("/sync", (req, res, next) => workoutController.sync(req, res, next));
 router.get("/", (req, res, next) => workoutController.list(req, res, next));
+router.delete("/:id", (req, res, next) => workoutController.deleteById(req, res, next));
 
 export default router;

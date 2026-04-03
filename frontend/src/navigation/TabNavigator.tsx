@@ -6,7 +6,8 @@ import React from "react";
 import { StyleSheet, Platform } from "react-native";
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, fontSize, fontWeight } from "../constants/theme";
+import { fontSize, fontWeight } from "../constants/theme";
+import { useTheme } from "../hooks/ThemeContext";
 
 import HomeScreen from "../screens/HomeScreen";
 import MyProgressScreen from "../screens/MyProgressScreen";
@@ -23,6 +24,9 @@ const TAB_ICONS: Record<string, { focused: IoniconsName; unfocused: IoniconsName
 };
 
 export default function TabNavigator() {
+    const { colors } = useTheme();
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
+
     return (
         <Tab.Navigator
             screenOptions={({ route }) => ({
@@ -57,7 +61,7 @@ export default function TabNavigator() {
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
     tabBar: {
         backgroundColor: colors.tabBarBg,
         borderTopColor: colors.border,

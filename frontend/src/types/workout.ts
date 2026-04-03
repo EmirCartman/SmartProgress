@@ -10,16 +10,69 @@ export interface WorkoutSet {
     weight: number;
     reps: number;
     unit: "kg" | "lbs";
-    rpe?: number; // Rate of Perceived Exertion (1-10)
+    rpe?: number | string; // Rate of Perceived Exertion (1-10) or RIR range like "1-2"
     completed: boolean;
+    isWarmup?: boolean;    // warmup set flag
+    targetReps?: string;   // from program template
+    targetWeight?: string; // from program template
+    targetRPE?: string;    // from program template
+    targetRIR?: string;    // from program template
 }
 
-// ─── Exercise ────────────────────────────────
+// ─── Target Set (Program Template) ──────────
+
+export interface TargetSet {
+    targetReps: string;    // e.g. "8-12" or "10"
+    targetWeight?: string; // e.g. "100"
+    targetRPE?: string;    // 0-10
+    targetRIR?: string;    // 0-5
+    isWarmup?: boolean;    // warmup set flag
+}
+
+// ─── Target Exercise (Program Template) ─────
+
+export interface TargetExercise {
+    id: string;
+    name: string;
+    targetSets: TargetSet[];
+}
+
+// ─── Exercise (Live Session) ─────────────────
 
 export interface WorkoutExercise {
     id: string;
     name: string;
     sets: WorkoutSet[];
+    isCustom?: boolean;    // true for manually added exercises (editable name, add set)
+    targetReps?: string;   // from program template, e.g. "8-12"
+    targetWeight?: string; // from program template, e.g. "100"
+    targetRPE?: string;    // from program template
+    targetRIR?: string;    // from program template
+}
+
+// ─── Cycle-Based Program Data ─────────────────
+
+export interface ProgramDay {
+    label: string;             // "Gün 1 — Anterior"
+    exercises: TargetExercise[];
+    isRestDay?: boolean;       // Off / dinlenme günü işareti
+}
+
+export interface CycleProgramData {
+    frequency: number;         // sessions per week, e.g. 3
+    days: ProgramDay[];
+}
+
+// Legacy flat structure (backwards compat)
+export interface LegacyProgramData {
+    exercises: TargetExercise[];
+}
+
+export type ProgramData = CycleProgramData | LegacyProgramData;
+
+/** Type guard: is this a cycle-based program? */
+export function isCycleProgram(data: any): data is CycleProgramData {
+    return data && Array.isArray(data.days) && data.days.length > 0;
 }
 
 // ─── Session ─────────────────────────────────
@@ -34,7 +87,10 @@ export interface WorkoutSession {
     startedAt: string; // ISO 8601
     completedAt?: string; // ISO 8601
     totalDuration: number; // seconds
+    totalVolume?: number; // toplam hacim (Σ weight × reps)
     status: SessionStatus;
+    programId?: string;    // linked program (for cycle advance)
+    dayIndex?: number;     // which day was trained
 }
 
 // ─── Sync ────────────────────────────────────
@@ -64,9 +120,13 @@ export interface SyncWorkoutPayload {
                 reps: number;
                 weight: number;
                 unit: "kg" | "lbs";
+                rpe?: number | string;
+                rir?: number | string;
+                isWarmup?: boolean;
             }[];
         }[];
         totalDuration?: number;
+        totalVolume?: number;
     };
     logDate: string; // ISO 8601
 }

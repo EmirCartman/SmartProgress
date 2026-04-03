@@ -18,9 +18,15 @@ router.get("/mine", (req, res, next) => programController.listMine(req, res, nex
 router.patch("/:id/visibility", (req, res, next) =>
     programController.toggleVisibility(req, res, next),
 );
+router.patch("/:id/advance-day", (req, res, next) =>
+    programController.advanceDay(req, res, next),
+);
 router.get("/suggest/:exerciseName", (req, res, next) =>
     programController.suggestWeight(req, res, next),
 );
+router.put("/:id", (req, res, next) => programController.update(req, res, next));
+router.delete("/:id", (req, res, next) => programController.delete(req, res, next));
 router.get("/:id", (req, res, next) => programController.getById(req, res, next));
 
 export default router;
+

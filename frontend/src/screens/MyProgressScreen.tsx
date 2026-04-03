@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────
 // MyProgressScreen — Data Analytics & Charts
-// PR gelişimleri, haftalık hacim, akıllı tahmin
+// Zaman filtreli hacim grafiği, PR detay modal
 // ─────────────────────────────────────────────
 import React from "react";
 import {
@@ -9,94 +9,122 @@ import {
     ScrollView,
     StyleSheet,
     Dimensions,
+    TouchableOpacity,
+    Modal,
 } from "react-native";
 import { LineChart } from "react-native-chart-kit";
 import { Ionicons } from "@expo/vector-icons";
-import { colors, spacing, fontSize, fontWeight, borderRadius } from "../constants/theme";
+import { spacing, fontSize, fontWeight, borderRadius } from "../constants/theme";
+import { useTheme } from "../hooks/ThemeContext";
 import { useFocusEffect } from "@react-navigation/native";
-import { workoutApi, programApi } from "../services/api";
+import { workoutApi } from "../services/api";
+import { useAuth } from "../store/AuthContext";
 import GymCard from "../components/GymCard";
 import SectionHeader from "../components/SectionHeader";
 
 const SCREEN_WIDTH = Dimensions.get("window").width;
 
+type TimeFilter = "1H" | "1A" | "1Y" | "Tümü";
+const FILTERS: TimeFilter[] = ["1H", "1A", "1Y", "Tümü"];
+const FILTER_DAYS: Record<TimeFilter, number> = { "1H": 7, "1A": 30, "1Y": 365, "Tümü": 9999 };
+
 export default function MyProgressScreen() {
-    const [volumeData, setVolumeData] = React.useState<{ labels: string[], datasets: { data: number[] }[] }>({
-        labels: ["0"],
-        datasets: [{ data: [0] }]
-    });
+    const { user } = useAuth();
+    const { colors } = useTheme();
+    const isAutoSuggestEnabled = user?.settings?.is_auto_suggest_enabled !== false;
+
+    const [filter, setFilter] = React.useState<TimeFilter>("1A");
+    const [allWorkouts, setAllWorkouts] = React.useState<any[]>([]);
+    const [volumeData, setVolumeData] = React.useState<{
+        labels: string[];
+        datasets: { data: number[] }[];
+    }>({ labels: ["0"], datasets: [{ data: [0] }] });
     const [prs, setPrs] = React.useState<any[]>([]);
     const [loading, setLoading] = React.useState(true);
+    const [selectedPR, setSelectedPR] = React.useState<any | null>(null);
+    const [showAllPrs, setShowAllPrs] = React.useState(false);
+
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
+
+    // ─── Volume calculation ───────────────────
+
+    const buildVolumeData = (workouts: any[], activeFilter: TimeFilter) => {
+        const cutoff = new Date();
+        cutoff.setDate(cutoff.getDate() - FILTER_DAYS[activeFilter]);
+        cutoff.setHours(0, 0, 0, 0);
+        const filtered = workouts.filter((w: any) => new Date(w.logDate) >= cutoff);
+
+        const volumePoints: number[] = [];
+        const labels: string[] = [];
+
+        [...filtered].reverse().forEach((wk: any, idx: number) => {
+            let vol = 0;
+            wk.data?.exercises?.forEach((ex: any) => {
+                ex.sets?.forEach((set: any) => {
+                    const w = parseFloat(set.weight) || 0;
+                    const r = parseInt(set.reps, 10) || 0;
+                    if (set.completed !== false) vol += w * r;
+                });
+            });
+            if (vol > 0) {
+                volumePoints.push(vol);
+                labels.push(`A${idx + 1}`);
+            }
+        });
+
+        if (volumePoints.length === 0) {
+            setVolumeData({ labels: ["-"], datasets: [{ data: [0] }] });
+        } else {
+            setVolumeData({ labels, datasets: [{ data: volumePoints }] });
+        }
+    };
+
+    // ─── Load analytics ───────────────────────
 
     const loadAnalytics = async () => {
         try {
-            const res = await workoutApi.list({ limit: 20 });
+            const res = await workoutApi.list({ limit: 200 });
             const workouts = res.data.workouts || [];
+            setAllWorkouts(workouts);
+            buildVolumeData(workouts, filter);
 
-            // 1) Calculate Volume (Weight * Reps) for each workout chronologically
-            const volumePoints: number[] = [];
-            const labels: string[] = [];
-
-            // Loop backwards to show chronological order
-            [...workouts].reverse().forEach((wk: any, idx: number) => {
-                let workoutVolume = 0;
-                if (wk.data?.exercises) {
-                    wk.data.exercises.forEach((ex: any) => {
-                        ex.sets?.forEach((set: any) => {
-                            const w = parseFloat(set.weight) || 0;
-                            const r = parseInt(set.reps, 10) || 0;
-                            if (set.completed !== false) { // count if true or undefined
-                                workoutVolume += (w * r);
-                            }
-                        });
-                    });
-                }
-                if (workoutVolume > 0) {
-                    volumePoints.push(workoutVolume);
-                    labels.push(`A$-${idx + 1}`);
-                }
-            });
-
-            if (volumePoints.length === 0) {
-                // Initial empty state
-                setVolumeData({ labels: ["-"], datasets: [{ data: [0] }] });
-            } else {
-                setVolumeData({ labels, datasets: [{ data: volumePoints }] });
-            }
-
-            // 2) Parse basic PRs
             const highestWeightMap = new Map<string, any>();
             workouts.forEach((wk: any) => {
-                if (wk.data?.exercises) {
-                    wk.data.exercises.forEach((ex: any) => {
-                        let maxWeightInThisWorkout = 0;
-                        ex.sets?.forEach((set: any) => {
-                            const w = parseFloat(set.weight) || 0;
-                            if (w > maxWeightInThisWorkout) maxWeightInThisWorkout = w;
-                        });
-                        if (maxWeightInThisWorkout > 0) {
-                            const currentBest = highestWeightMap.get(ex.name);
-                            if (!currentBest || maxWeightInThisWorkout > currentBest.weight) {
-                                highestWeightMap.set(ex.name, {
-                                    exercise: ex.name,
-                                    date: wk.logDate,
-                                    weight: maxWeightInThisWorkout,
-                                    unit: ex.sets[0]?.unit || "kg"
-                                });
-                            }
-                        }
+                wk.data?.exercises?.forEach((ex: any) => {
+                    let maxW = 0;
+                    ex.sets?.forEach((set: any) => {
+                        const w = parseFloat(set.weight) || 0;
+                        if (w > maxW) maxW = w;
                     });
-                }
+                    if (maxW > 0) {
+                        const best = highestWeightMap.get(ex.name);
+                        if (!best || maxW > best.weight) {
+                            highestWeightMap.set(ex.name, {
+                                exercise: ex.name,
+                                date: wk.logDate,
+                                workoutTitle: wk.title,
+                                weight: maxW,
+                                unit: ex.sets?.[0]?.unit || "kg",
+                            });
+                        }
+                    }
+                });
             });
-
-            setPrs(Array.from(highestWeightMap.values()).slice(0, 5));
-
-        } catch (error) {
-            console.error("Analytics Load Error", error);
+            // Keep all PRs sorted by highest weight descending
+            const sortedPrs = Array.from(highestWeightMap.values()).sort((a: any, b: any) => b.weight - a.weight);
+            setPrs(sortedPrs);
+        } catch (err) {
+            console.error("Analytics Load Error", err);
         } finally {
             setLoading(false);
         }
     };
+
+    // Re-filter when filter changes
+    React.useEffect(() => {
+        if (allWorkouts.length > 0) buildVolumeData(allWorkouts, filter);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [filter]);
 
     useFocusEffect(
         React.useCallback(() => {
@@ -104,166 +132,248 @@ export default function MyProgressScreen() {
         }, [])
     );
 
+    // ─── Render ───────────────────────────────
+
     return (
-        <ScrollView
-            style={styles.container}
-            contentContainerStyle={styles.content}
-            showsVerticalScrollIndicator={false}
-        >
-            {/* ─── Page Title ─── */}
-            <Text style={styles.pageTitle}>Gelişimim</Text>
-            <Text style={styles.pageSubtitle}>
-                Performans analitiğin ve akıllı öneriler
-            </Text>
+        <>
+            <ScrollView
+                style={styles.container}
+                contentContainerStyle={styles.content}
+                showsVerticalScrollIndicator={false}
+            >
+                {/* Page Title */}
+                <Text style={styles.pageTitle}>Gelişimim</Text>
+                <Text style={styles.pageSubtitle}>Performans analitiğin ve akıllı öneriler</Text>
 
-            {/* ─── Weekly Volume Chart ─── */}
-            <SectionHeader title="📊 Haftalık Antrenman Hacmi" />
-            <GymCard elevated style={styles.chartCard}>
-                <LineChart
-                    data={volumeData}
-                    width={SCREEN_WIDTH - spacing.lg * 2 - spacing.lg * 2}
-                    height={200}
-                    yAxisSuffix=" kg"
-                    chartConfig={{
-                        backgroundColor: colors.surface,
-                        backgroundGradientFrom: colors.surfaceLight,
-                        backgroundGradientTo: colors.surface,
-                        decimalPlaces: 0,
-                        color: (opacity = 1) => `rgba(204, 255, 0, ${opacity})`,
-                        labelColor: () => colors.textSecondary,
-                        propsForDots: {
-                            r: "5",
-                            strokeWidth: "2",
-                            stroke: colors.accent,
-                        },
-                        propsForBackgroundLines: {
-                            strokeDasharray: "",
-                            stroke: colors.border,
-                            strokeWidth: 0.5,
-                        },
-                    }}
-                    bezier
-                    style={styles.chart}
-                />
-                <View style={styles.chartLegend}>
-                    <View style={styles.legendDot} />
-                    <Text style={styles.legendText}>Toplam Hacim (kg)</Text>
-                </View>
-            </GymCard>
-
-            {/* ─── AI Suggestion ─── */}
-            <SectionHeader title="🧠 Akıllı Tahmin" />
-            <GymCard elevated style={styles.suggestionCard}>
-                <View style={styles.suggestionHeader}>
-                    <Ionicons name="sparkles" size={22} color={colors.accent} />
-                    <Text style={styles.suggestionTitle}>Auto-Regulation Önerisi</Text>
-                </View>
-                <View style={styles.suggestionBody}>
-                    <View style={styles.suggestionRow}>
-                        <Text style={styles.suggestionLabel}>Egzersiz</Text>
-                        <Text style={styles.suggestionValue}>
-                            -
-                        </Text>
-                    </View>
-                    <View style={styles.divider} />
-                    <View style={styles.suggestionRow}>
-                        <Text style={styles.suggestionLabel}>Son ağırlık</Text>
-                        <Text style={styles.suggestionValue}>
-                            -
-                        </Text>
-                    </View>
-                    <View style={styles.divider} />
-                    <View style={styles.suggestionRow}>
-                        <Text style={styles.suggestionLabel}>Son tekrar</Text>
-                        <Text style={styles.suggestionValue}>
-                            -
-                        </Text>
-                    </View>
-                    <View style={styles.divider} />
-                    <View style={styles.suggestionRow}>
-                        <Text style={styles.suggestionLabel}>Önerilen</Text>
-                        <Text style={[styles.suggestionValue, styles.suggestedWeight]}>
-                            Hesaplanıyor...
-                        </Text>
-                    </View>
-                </View>
-                <View style={styles.reasoningBox}>
-                    <Text style={styles.reasoningText}>AI Auto-Regulation (Yapay Zeka Önerisi) için daha fazla antrenman verisi gerekiyor. Sistemi beslemeye devam et!</Text>
-                </View>
-            </GymCard>
-
-            {/* ─── Personal Records ─── */}
-            <SectionHeader title="🏆 Kişisel Rekorlar (PR)" />
-            {prs.length > 0 ? prs.map((pr, index) => (
-                <GymCard key={index} style={styles.prCard}>
-                    <View style={styles.prRow}>
-                        <View style={styles.prRank}>
-                            <Text style={styles.prRankText}>#{index + 1}</Text>
-                        </View>
-                        <View style={styles.prInfo}>
-                            <Text style={styles.prExercise}>{pr.exercise}</Text>
-                            <Text style={styles.prDate}>
-                                {new Date(pr.date).toLocaleDateString("tr-TR", {
-                                    day: "numeric",
-                                    month: "short",
-                                    year: "numeric",
-                                })}
+                {/* ─── Time Filter Row ─── */}
+                <View style={styles.filterRow}>
+                    {FILTERS.map((f) => (
+                        <TouchableOpacity
+                            key={f}
+                            style={[styles.filterBtn, filter === f && styles.filterBtnActive]}
+                            onPress={() => setFilter(f)}
+                        >
+                            <Text style={[styles.filterText, filter === f && styles.filterTextActive]}>
+                                {f}
                             </Text>
-                        </View>
-                        <View style={styles.prWeight}>
-                            <Text style={styles.prWeightValue}>
-                                {pr.weight}
-                            </Text>
-                            <Text style={styles.prWeightUnit}>{pr.unit}</Text>
-                        </View>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+
+                {/* ─── Volume Chart ─── */}
+                <SectionHeader title="📊 Antrenman Hacmi" />
+                <GymCard elevated style={styles.chartCard}>
+                    <LineChart
+                        data={volumeData}
+                        width={SCREEN_WIDTH - spacing.lg * 4}
+                        height={200}
+                        yAxisSuffix=" kg"
+                        chartConfig={{
+                            backgroundColor: colors.surface,
+                            backgroundGradientFrom: colors.surfaceLight,
+                            backgroundGradientTo: colors.surface,
+                            decimalPlaces: 0,
+                            // Convert the hex accent color to rgb for chart-kit:
+                            color: (opacity = 1) => {
+                                const hexMatch = colors.accent.match(/\w\w/g);
+                                if (!hexMatch) return `rgba(204, 255, 0, ${opacity})`;
+                                const [r, g, b] = hexMatch.map((h: string) => parseInt(h, 16));
+                                return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+                            },
+                            labelColor: () => colors.textSecondary,
+                            propsForDots: { r: "5", strokeWidth: "2", stroke: colors.accent },
+                            propsForBackgroundLines: {
+                                strokeDasharray: "",
+                                stroke: colors.border,
+                                strokeWidth: 0.5,
+                            },
+                        }}
+                        bezier
+                        style={styles.chart}
+                    />
+                    <View style={styles.chartLegend}>
+                        <View style={styles.legendDot} />
+                        <Text style={styles.legendText}>Toplam Hacim (kg)</Text>
                     </View>
                 </GymCard>
-            )) : (
-                <Text style={{ color: colors.textSecondary, fontStyle: "italic", marginTop: spacing.sm }}>
-                    Henüz rekor bulunamadı.
-                </Text>
-            )}
 
-            <View style={{ height: spacing.xxxl }} />
-        </ScrollView>
+                {/* ─── AI Suggestion ─── */}
+                {isAutoSuggestEnabled && (
+                    <>
+                        <SectionHeader title="🧠 Akıllı Tahmin" />
+                        <GymCard elevated style={styles.suggestionCard}>
+                            <View style={styles.suggestionHeader}>
+                                <Ionicons name="sparkles" size={22} color={colors.accent} />
+                                <Text style={styles.suggestionTitle}>Auto-Regulation Önerisi</Text>
+                            </View>
+                            <View style={styles.predictionRow}>
+                                <View style={styles.predictionBadge}>
+                                    <Text style={styles.predictionBadgeText}>Tahmini</Text>
+                                </View>
+                                <Text style={styles.predictionValue}>+2.5 kg</Text>
+                                <Text style={styles.predictionLabel}>ilerleyin</Text>
+                            </View>
+                            <View style={styles.reasoningBox}>
+                                <Text style={styles.reasoningText}>
+                                    AI Auto-Regulation için daha fazla antrenman verisi gerekiyor. Sistemi beslemeye devam et!
+                                </Text>
+                            </View>
+                        </GymCard>
+                    </>
+                )}
+
+                {/* ─── Personal Records ─── */}
+                <SectionHeader
+                    title="🏆 Kişisel Rekorlar (PR)"
+                    actionLabel={showAllPrs ? "Gizle" : "Tümünü Gör"}
+                    onAction={() => setShowAllPrs(!showAllPrs)}
+                />
+                {prs.length > 0 ? (
+                    (showAllPrs ? prs : prs.slice(0, 5)).map((pr, index) => (
+                        <TouchableOpacity
+                            key={index}
+                            onPress={() => setSelectedPR(pr)}
+                            activeOpacity={0.8}
+                        >
+                            <GymCard style={styles.prCard}>
+                                <View style={styles.prRow}>
+                                    <View style={styles.prRank}>
+                                        <Text style={styles.prRankText}>#{index + 1}</Text>
+                                    </View>
+                                    <View style={styles.prInfo}>
+                                        <Text style={styles.prExercise}>{pr.exercise}</Text>
+                                        <Text style={styles.prDate}>
+                                            {new Date(pr.date).toLocaleDateString("tr-TR", {
+                                                day: "numeric",
+                                                month: "short",
+                                                year: "numeric",
+                                            })}
+                                        </Text>
+                                    </View>
+                                    <View style={styles.prWeight}>
+                                        <Text style={styles.prWeightValue}>{pr.weight}</Text>
+                                        <Text style={styles.prWeightUnit}>{pr.unit}</Text>
+                                    </View>
+                                </View>
+                            </GymCard>
+                        </TouchableOpacity>
+                    ))
+                ) : (
+                    <Text style={styles.emptyText}>Henüz rekor bulunamadı.</Text>
+                )}
+
+                <View style={{ height: spacing.xxxl }} />
+            </ScrollView>
+
+            {/* ─── PR Detail Modal ─── */}
+            <Modal
+                visible={selectedPR !== null}
+                transparent
+                animationType="slide"
+                onRequestClose={() => setSelectedPR(null)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={styles.modalCard}>
+                        <View style={styles.modalHeader}>
+                            <Text style={styles.modalTitle}>🏆 Kişisel Rekor</Text>
+                            <TouchableOpacity onPress={() => setSelectedPR(null)}>
+                                <Ionicons name="close" size={24} color={colors.text} />
+                            </TouchableOpacity>
+                        </View>
+                        {selectedPR && (
+                            <>
+                                <Text style={styles.modalExercise}>{selectedPR.exercise}</Text>
+                                <Text style={styles.modalWeight}>
+                                    {selectedPR.weight} {selectedPR.unit}
+                                </Text>
+                                <View style={styles.modalMeta}>
+                                    <Text style={styles.modalMetaText}>
+                                        📅 {new Date(selectedPR.date).toLocaleDateString("tr-TR", {
+                                            day: "numeric",
+                                            month: "long",
+                                            year: "numeric",
+                                        })}
+                                    </Text>
+                                    {selectedPR.workoutTitle && (
+                                        <Text style={styles.modalMetaText}>
+                                            🏋️ {selectedPR.workoutTitle}
+                                        </Text>
+                                    )}
+                                </View>
+                                <TouchableOpacity style={styles.videoBtn}>
+                                    <Ionicons name="videocam-outline" size={18} color={colors.background} />
+                                    <Text style={styles.videoBtnText}>Video Yükle (Yakında)</Text>
+                                </TouchableOpacity>
+                            </>
+                        )}
+                    </View>
+                </View>
+            </Modal>
+        </>
     );
 }
 
-// ─── Styles ─────────────────────────────────
+// ─── Styles ──────────────────────────────────
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: colors.background,
     },
     content: {
         paddingHorizontal: spacing.lg,
-        paddingTop: spacing.xxxl + spacing.xl,
+        paddingTop: spacing.lg,
         paddingBottom: spacing.xxxl,
     },
     pageTitle: {
         fontSize: fontSize.xxxl,
         fontWeight: fontWeight.heavy,
         color: colors.text,
-        marginBottom: spacing.xs,
+        marginBottom: 4,
     },
     pageSubtitle: {
         fontSize: fontSize.md,
         color: colors.textSecondary,
-        marginBottom: spacing.xxl,
+        marginBottom: spacing.xl,
+    },
+    filterRow: {
+        flexDirection: "row",
+        marginBottom: spacing.xl,
+        gap: spacing.sm,
+    },
+    filterBtn: {
+        flex: 1,
+        paddingVertical: spacing.sm,
+        borderRadius: borderRadius.md,
+        backgroundColor: colors.surface,
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    filterBtnActive: {
+        backgroundColor: colors.accent,
+        borderColor: colors.accent,
+    },
+    filterText: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.medium,
+        color: colors.textSecondary,
+    },
+    filterTextActive: {
+        color: colors.background,
+        fontWeight: fontWeight.bold,
     },
     chartCard: {
         marginBottom: spacing.xxl,
         overflow: "hidden",
     },
     chart: {
-        borderRadius: borderRadius.md,
-        marginLeft: -spacing.lg,
+        marginLeft: -spacing.md,
     },
     chartLegend: {
         flexDirection: "row",
         alignItems: "center",
-        marginTop: spacing.md,
+        marginTop: spacing.sm,
     },
     legendDot: {
         width: 10,
@@ -278,58 +388,52 @@ const styles = StyleSheet.create({
     },
     suggestionCard: {
         marginBottom: spacing.xxl,
-        borderColor: colors.accent,
-        borderWidth: 1,
     },
     suggestionHeader: {
         flexDirection: "row",
         alignItems: "center",
-        marginBottom: spacing.lg,
+        marginBottom: spacing.md,
+        gap: spacing.sm,
     },
     suggestionTitle: {
         fontSize: fontSize.lg,
+        fontWeight: fontWeight.semibold,
+        color: colors.text,
+    },
+    predictionRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginBottom: spacing.md,
+        gap: spacing.sm,
+    },
+    predictionBadge: {
+        backgroundColor: colors.accentMuted,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: borderRadius.sm,
+    },
+    predictionBadgeText: {
+        fontSize: fontSize.xs,
         fontWeight: fontWeight.bold,
         color: colors.accent,
-        marginLeft: spacing.sm,
     },
-    suggestionBody: {
-        backgroundColor: colors.surfaceElevated,
-        borderRadius: borderRadius.md,
-        padding: spacing.md,
-        marginBottom: spacing.md,
+    predictionValue: {
+        fontSize: fontSize.xl,
+        fontWeight: fontWeight.heavy,
+        color: colors.accent,
     },
-    suggestionRow: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        paddingVertical: spacing.sm,
-    },
-    suggestionLabel: {
+    predictionLabel: {
         fontSize: fontSize.md,
         color: colors.textSecondary,
     },
-    suggestionValue: {
-        fontSize: fontSize.md,
-        color: colors.text,
-        fontWeight: fontWeight.semibold,
-    },
-    suggestedWeight: {
-        color: colors.accent,
-        fontWeight: fontWeight.heavy,
-        fontSize: fontSize.xl,
-    },
-    divider: {
-        height: 1,
-        backgroundColor: colors.border,
-    },
     reasoningBox: {
-        backgroundColor: colors.accentMuted,
-        borderRadius: borderRadius.sm,
-        padding: spacing.md,
+        backgroundColor: colors.background,
+        borderRadius: borderRadius.md,
+        padding: spacing.sm,
     },
     reasoningText: {
         fontSize: fontSize.sm,
-        color: colors.accent,
+        color: colors.textSecondary,
         lineHeight: 20,
     },
     prCard: {
@@ -340,9 +444,9 @@ const styles = StyleSheet.create({
         alignItems: "center",
     },
     prRank: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
         backgroundColor: colors.accentMuted,
         alignItems: "center",
         justifyContent: "center",
@@ -377,5 +481,68 @@ const styles = StyleSheet.create({
     prWeightUnit: {
         fontSize: fontSize.xs,
         color: colors.textSecondary,
+    },
+    emptyText: {
+        color: colors.textSecondary,
+        fontStyle: "italic",
+        marginTop: spacing.sm,
+    },
+    // Modal
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.7)",
+        justifyContent: "flex-end",
+    },
+    modalCard: {
+        backgroundColor: colors.surface,
+        borderTopLeftRadius: borderRadius.xl,
+        borderTopRightRadius: borderRadius.xl,
+        padding: spacing.xl,
+        paddingBottom: 40,
+    },
+    modalHeader: {
+        flexDirection: "row",
+        justifyContent: "space-between",
+        alignItems: "center",
+        marginBottom: spacing.md,
+    },
+    modalTitle: {
+        fontSize: fontSize.lg,
+        fontWeight: fontWeight.bold,
+        color: colors.text,
+    },
+    modalExercise: {
+        fontSize: fontSize.xxl,
+        fontWeight: fontWeight.heavy,
+        color: colors.text,
+        marginBottom: spacing.xs,
+    },
+    modalWeight: {
+        fontSize: 42,
+        fontWeight: fontWeight.heavy,
+        color: colors.accent,
+        marginBottom: spacing.md,
+    },
+    modalMeta: {
+        gap: spacing.xs,
+        marginBottom: spacing.xl,
+    },
+    modalMetaText: {
+        fontSize: fontSize.md,
+        color: colors.textSecondary,
+    },
+    videoBtn: {
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        backgroundColor: colors.textSecondary,
+        paddingVertical: spacing.md,
+        borderRadius: borderRadius.md,
+        gap: spacing.xs,
+    },
+    videoBtnText: {
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.bold,
+        color: colors.background,
     },
 });

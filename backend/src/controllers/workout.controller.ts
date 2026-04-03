@@ -49,6 +49,25 @@ export class WorkoutController {
             next(error);
         }
     }
+
+    /**
+     * DELETE /:id
+     * Delete a specific workout log.
+     */
+    async deleteById(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const userId = req.user!.userId;
+            const id = req.params.id as string;
+
+            await workoutService.deleteWorkout(userId, id);
+
+            res.status(200).json({
+                message: "Workout deleted successfully",
+            });
+        } catch (error) {
+            next(error);
+        }
+    }
 }
 
 export const workoutController = new WorkoutController();

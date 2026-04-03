@@ -12,7 +12,7 @@ import { ValidationError } from "../utils/errors";
 // ─── Zod Schema for JSONB Workout Data ───────
 
 const workoutSetSchema = z.object({
-    reps: z.number().int().positive(),
+    reps: z.number().int().min(0),
     weight: z.number().nonnegative(),
     unit: z.enum(["kg", "lbs"]).default("kg"),
 });
@@ -87,6 +87,13 @@ export class WorkoutService {
         offset?: number,
     ): Promise<WorkoutLog[]> {
         return workoutRepository.findByUserId(userId, { limit, offset });
+    }
+
+    /**
+     * Delete a workout log by ID.
+     */
+    async deleteWorkout(userId: string, id: string): Promise<void> {
+        return workoutRepository.deleteById(userId, id);
     }
 
     /**

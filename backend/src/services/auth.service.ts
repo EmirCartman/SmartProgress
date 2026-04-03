@@ -25,6 +25,13 @@ export interface LoginDto {
     password: string;
 }
 
+export interface UpdateProfileDto {
+    firstName?: string;
+    lastName?: string;
+    nickname?: string;
+    settings?: Record<string, any>;
+}
+
 export interface AuthResponse {
     token: string;
     user: {
@@ -32,6 +39,7 @@ export interface AuthResponse {
         email: string;
         firstName: string;
         lastName: string;
+        nickname: string | null;
         role: string;
         settings: unknown;
     };
@@ -81,6 +89,7 @@ export class AuthService {
                 email: user.email,
                 firstName: user.firstName,
                 lastName: user.lastName,
+                nickname: user.nickname,
                 role: user.role,
                 settings: user.settings,
             },
@@ -120,6 +129,7 @@ export class AuthService {
                 email: user.email,
                 firstName: user.firstName,
                 lastName: user.lastName,
+                nickname: user.nickname,
                 role: user.role,
                 settings: user.settings,
             },
@@ -132,7 +142,9 @@ export class AuthService {
     async getProfile(userId: string): Promise<AuthResponse["user"]> {
         const user = await userRepository.findById(userId);
         if (!user) {
-            throw new NotFoundError("User not found");
+            // Token is valid but the user no longer exists in the DB (e.g. DB was reset).
+            // Return 401 so the frontend's response interceptor clears the stale token.
+            throw new UnauthorizedError("User account not found. Please log in again.");
         }
 
         return {
@@ -140,8 +152,40 @@ export class AuthService {
             email: user.email,
             firstName: user.firstName,
             lastName: user.lastName,
+            nickname: user.nickname,
             role: user.role,
             settings: user.settings,
+        };
+    }
+
+    /**
+     * Update user profile (name, nickname, settings).
+     */
+    async updateProfile(userId: string, dto: UpdateProfileDto): Promise<AuthResponse["user"]> {
+        const user = await userRepository.findById(userId);
+        if (!user) {
+            throw new NotFoundError("User not found");
+        }
+
+        const updateData: Record<string, any> = {};
+        if (dto.firstName !== undefined) updateData.firstName = dto.firstName;
+        if (dto.lastName !== undefined) updateData.lastName = dto.lastName;
+        if (dto.nickname !== undefined) updateData.nickname = dto.nickname;
+        if (dto.settings !== undefined) {
+            // Merge with existing settings to preserve unset keys
+            updateData.settings = { ...(user.settings as any || {}), ...dto.settings };
+        }
+
+        const updated = await userRepository.updateById(userId, updateData);
+
+        return {
+            id: updated.id,
+            email: updated.email,
+            firstName: updated.firstName,
+            lastName: updated.lastName,
+            nickname: updated.nickname,
+            role: updated.role,
+            settings: updated.settings,
         };
     }
 
@@ -156,3 +200,4 @@ export class AuthService {
 }
 
 export const authService = new AuthService();
+

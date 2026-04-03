@@ -4,7 +4,8 @@
 // ─────────────────────────────────────────────
 import React from "react";
 import { View, Text, StyleSheet } from "react-native";
-import { colors, borderRadius, spacing, fontSize, fontWeight } from "../constants/theme";
+import { borderRadius, spacing, fontSize, fontWeight } from "../constants/theme";
+import { useTheme } from "../hooks/ThemeContext";
 
 interface StatBadgeProps {
     value: string | number;
@@ -14,6 +15,9 @@ interface StatBadgeProps {
 }
 
 export default function StatBadge({ value, label, icon, accentValue = false }: StatBadgeProps) {
+    const { colors } = useTheme();
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
+
     return (
         <View style={styles.container}>
             {icon && <View style={styles.iconWrap}>{icon}</View>}
@@ -25,7 +29,7 @@ export default function StatBadge({ value, label, icon, accentValue = false }: S
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: colors.surface,

@@ -18,12 +18,14 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../navigation/RootNavigator";
-import { programApi } from "../services/api";
-import { colors, spacing, fontSize, fontWeight, borderRadius } from "../constants/theme";
+import { spacing, fontSize, fontWeight, borderRadius } from "../constants/theme";
+import { useTheme } from "../hooks/ThemeContext";
 import {
     WorkoutSession,
     WorkoutExercise,
     WorkoutSet,
+    TargetSet,
+    ProgramData,
 } from "../types/workout";
 import DraggableFlatList, {
     ScaleDecorator,
@@ -36,6 +38,8 @@ import {
     savePendingWorkout,
     syncPendingWorkouts,
 } from "../services/syncService";
+import { programApi } from "../services/api";
+import { useAuth } from "../store/AuthContext";
 import AccentButton from "../components/AccentButton";
 
 // ─── Constants ───────────────────────────────
@@ -54,40 +58,73 @@ function uid(): string {
     });
 }
 
-// ─── New Factories ───────────────────────────
-
-function createSet(): WorkoutSet {
-    return { id: uid(), weight: 0, reps: 0, unit: "kg", completed: false };
-}
-
-function createExercise(): WorkoutExercise {
-    return { id: uid(), name: "", sets: [createSet()] };
-}
+// ─── New Factories & Helpers ─────────────────
 
 function createSession(): WorkoutSession {
     return {
         id: uid(),
-        title: "Antrenman",
+        title: "",
         sportId: DEFAULT_SPORT_ID,
-        exercises: [createExercise()],
+        exercises: [],
         startedAt: new Date().toISOString(),
         totalDuration: 0,
         status: "active",
     };
 }
 
+/**
+ * Normalize any incoming programData shape into a ProgramData or null.
+ * Supported shapes:
+ * - { frequency, days: [...] }
+ * - { data: { frequency, days: [...] }, ... }
+ * - { exercises: [...] }
+ */
+function normalizeProgramData(raw: any): ProgramData | null {
+    if (!raw) return null;
+
+    let data: any = raw;
+
+    // If we're passed the full Program object, unwrap inner data
+    if (data && data.data && !Array.isArray(data.days) && !data.exercises) {
+        data = data.data;
+    }
+
+    // Cycle-based structure
+    if (typeof data.frequency === "number" && Array.isArray(data.days)) {
+        return {
+            frequency: data.frequency,
+            days: data.days,
+        };
+    }
+
+    // Legacy flat exercises structure
+    if (Array.isArray(data.exercises)) {
+        return {
+            exercises: data.exercises,
+        } as ProgramData;
+    }
+
+    console.warn("[WorkoutSession] normalizeProgramData: Unsupported programData shape", {
+        keys: Object.keys(data || {}),
+    });
+    return null;
+}
+
 // ─── Component ───────────────────────────────
 
 export default function WorkoutSessionScreen() {
-    const navigation = useNavigation();
+    const navigation = useNavigation<any>();
     const route = useRoute<RouteProp<RootStackParamList, "WorkoutSession">>();
-    const programId = route.params?.programId;
+    const { user } = useAuth();
+    const { colors } = useTheme();
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
+    const isAutoSuggestEnabled = user?.settings?.is_auto_suggest_enabled !== false;
 
     const [session, setSession] = useState<WorkoutSession>(createSession);
     const [elapsed, setElapsed] = useState(0);
     const [finishing, setFinishing] = useState(false);
     const [restored, setRestored] = useState(false);
-    const [isRirMode, setIsRirMode] = useState(false);
+    const [rpeMode, setRpeMode] = useState<"rpe" | "rir" | "both">("rpe");
 
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -113,9 +150,10 @@ export default function WorkoutSessionScreen() {
     const cacheKey = (exerciseId: string, setId: string, field: string) =>
         `${exerciseId}-${setId}-${field}`;
 
-    const getTextValue = (exerciseId: string, setId: string, field: string, numericValue: number): string => {
+    const getTextValue = (exerciseId: string, setId: string, field: string, numericValue: number | string): string => {
         const key = cacheKey(exerciseId, setId, field);
         if (key in textCache) return textCache[key];
+        if (typeof numericValue === 'string') return numericValue || "";
         return numericValue > 0 ? String(numericValue) : "";
     };
 
@@ -126,13 +164,25 @@ export default function WorkoutSessionScreen() {
         setTextCache((prev) => ({ ...prev, [key]: normalized }));
     };
 
-    const onNumericBlur = (exerciseId: string, setId: string, field: keyof WorkoutSet, isInteger = false) => {
-        const key = cacheKey(exerciseId, setId, field);
+    const onNumericBlur = (exerciseId: string, setId: string, field: keyof WorkoutSet | string, isInteger = false) => {
+        const key = cacheKey(exerciseId, setId, field as string);
         const raw = textCache[key];
         if (raw === undefined) return;
+
+        // RIR accepts string ranges like "1-2", "2-3" — preserve as-is
+        if (field === "rir") {
+            updateSet(exerciseId, setId, field as any, raw.trim() || "");
+            setTextCache((prev) => {
+                const next = { ...prev };
+                delete next[key];
+                return next;
+            });
+            return;
+        }
+
         const num = isInteger ? (parseInt(raw, 10) || 0) : (parseFloat(raw) || 0);
         const clamped = field === "rpe" ? Math.min(num, 10) : num;
-        updateSet(exerciseId, setId, field, clamped);
+        updateSet(exerciseId, setId, field as any, clamped);
         // Clear cache so it falls back to formatted number
         setTextCache((prev) => {
             const next = { ...prev };
@@ -144,43 +194,174 @@ export default function WorkoutSessionScreen() {
     // ─── Restore Active Session / Load Program ─
     useEffect(() => {
         (async () => {
+            console.log("[WorkoutSession] route params:", JSON.stringify(route.params, null, 2));
+
             const saved = await restoreActiveSession();
-            if (saved && saved.status === "active") {
+            const params = route.params;
+            const hasProgramParams = !!(params?.programId || params?.programData);
+
+            // Session guard: if there IS a saved session AND new program params,
+            // warn the user instead of silently overwriting.
+            if (saved && saved.status === "active" && hasProgramParams) {
+                Alert.alert(
+                    "Aktif Antrenman",
+                    "Hali hazırda devam eden bir antrenmanınız var. Lütfen önce onu bitirin veya iptal edin.",
+                    [
+                        {
+                            text: "Mevcut Antrenmana Dön",
+                            onPress: () => {
+                                setSession(saved);
+                                const start = new Date(saved.startedAt).getTime();
+                                setElapsed(Math.floor((Date.now() - start) / 1000));
+                                setRestored(true);
+                            },
+                        },
+                        { text: "Geri Git", style: "cancel", onPress: () => navigation.goBack() },
+                    ],
+                );
+                return;
+            }
+
+            // Eğer programdan gelmiyorsak ve aktif bir oturum varsa, onu devam ettir.
+            if (saved && saved.status === "active" && !hasProgramParams) {
                 setSession(saved);
-                // Calculate elapsed time from startedAt
                 const start = new Date(saved.startedAt).getTime();
-                const now = Date.now();
-                setElapsed(Math.floor((now - start) / 1000));
-            } else if (programId) {
-                try {
-                    const res = await programApi.getById(programId);
-                    const prog = res.data;
-                    if (prog && prog.data && prog.data.exercises) {
-                        const newExercises: WorkoutExercise[] = prog.data.exercises.map((templateEx: any) => ({
+                setElapsed(Math.floor((Date.now() - start) / 1000));
+            } else {
+                const programId = params?.programId;
+                const hasProgramDataParam = !!params?.programData;
+                let programData = params?.programData as any;
+                let programName = params?.programName;
+                const dayIndex = params?.dayIndex ?? 0;
+
+                if (!programId && !programData) {
+                    Alert.alert(
+                        "Program Gerekli",
+                        "Bu ekran sadece bir antrenman programı üzerinden açılabilir.",
+                    );
+                    navigation.goBack();
+                    return;
+                }
+
+                console.log(
+                    "[WorkoutSession] raw programData from params:",
+                    JSON.stringify(programData, null, 2),
+                );
+
+                // Only hit backend when no programData was provided at all but we have an ID.
+                if (programId && !hasProgramDataParam) {
+                    try {
+                        console.log(
+                            "[WorkoutSession] Fetching program by ID from backend:",
+                            programId,
+                        );
+                        const res = await programApi.getById(programId);
+                        const fetched = res.data;
+                        if (fetched) {
+                            programData = fetched.data;
+                            programName = fetched.name;
+                        }
+                    } catch (err: any) {
+                        if (err?.response?.status === 404) {
+                            console.warn(
+                                "[WorkoutSession] Program not found on server (404). It may have been deleted or is inaccessible.",
+                                { programId },
+                            );
+                        } else {
+                            console.error(
+                                "[WorkoutSession] Failed to load program by ID:",
+                                err,
+                            );
+                        }
+                        Alert.alert(
+                            "Hata",
+                            "Program yüklenirken bir sorun oluştu veya program silinmiş.",
+                        );
+                        navigation.goBack();
+                        return;
+                    }
+                }
+
+                if (typeof programData === "string") {
+                    try { programData = JSON.parse(programData); } catch (e) { console.error("Parse error:", e); }
+                }
+
+                const normalized = normalizeProgramData(programData);
+
+                if (!normalized) {
+                    console.warn("[WorkoutSession] Program verisi normalize edilemedi. Şablon bozuk olabilir.");
+                    Alert.alert(
+                        "Program Hatası",
+                        "Bu programın şablonu bozuk görünüyor. Lütfen programı düzenleyip tekrar deneyin.",
+                    );
+                    navigation.goBack();
+                    return;
+                }
+
+                // ── Cycle-based: pick exercises from days[dayIndex] ──
+                const isCycle = (normalized as any).days && Array.isArray((normalized as any).days);
+                const days = isCycle ? (normalized as any).days : undefined;
+                const templateExercises: any[] = isCycle
+                    ? (days![dayIndex % days!.length]?.exercises ?? [])
+                    : ((normalized as any).exercises ?? []);
+
+                if (templateExercises.length > 0) {
+                    const dayLabel = isCycle
+                        ? days![dayIndex % days!.length]?.label
+                        : undefined;
+                    const title = dayLabel
+                        ? `${programName ?? "Antrenman"} · ${dayLabel}`
+                        : (programName ?? "Antrenman");
+
+                    const newExercises: WorkoutExercise[] = templateExercises.map((templateEx: any) => {
+                        const targetSet = templateEx.targetSets?.[0] ?? templateEx.sets?.[0];
+                        return {
                             id: uid(),
                             name: templateEx.name,
-                            sets: templateEx.sets.map((templateSet: any) => ({
+                            targetReps: targetSet?.targetReps,
+                            targetWeight: targetSet?.targetWeight,
+                            targetRPE: targetSet?.targetRPE,
+                            targetRIR: targetSet?.targetRIR,
+                            sets: (templateEx.targetSets ?? templateEx.sets ?? [{}]).map((ts: TargetSet) => ({
                                 id: uid(),
                                 weight: 0,
-                                reps: templateSet.targetReps || 0,
+                                reps: 0,
                                 rpe: 0,
-                                unit: "kg",
-                                completed: false
-                            }))
-                        }));
-                        setSession(prev => ({
-                            ...prev,
-                            title: prog.name,
-                            exercises: newExercises
-                        }));
-                    }
-                } catch (error) {
-                    console.error("[WorkoutSession] Failed to load program", error);
+                                unit: "kg" as const,
+                                completed: false,
+                                isWarmup: !!ts?.isWarmup,
+                                targetReps: ts?.targetReps,
+                                targetWeight: ts?.targetWeight,
+                                targetRPE: ts?.targetRPE,
+                                targetRIR: ts?.targetRIR,
+                            })),
+                        };
+                    });
+                    setSession(prev => ({
+                        ...prev,
+                        title,
+                        exercises: newExercises,
+                        programId: programId,
+                        dayIndex,
+                    }));
+                } else {
+                    console.warn("[WorkoutSession] Program verisi normalize edildi ama egzersiz listesi boş.", {
+                        isCycle,
+                        daysLength: isCycle ? days?.length : undefined,
+                        hasExercises: !isCycle && !!(normalized as any).exercises,
+                    });
+                    Alert.alert(
+                        "Boş Program Günü",
+                        "Bu program gününde tanımlı egzersiz bulunmuyor. Lütfen programı düzenleyin.",
+                    );
+                    navigation.goBack();
+                    return;
                 }
             }
             setRestored(true);
         })();
-    }, [programId]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // ─── Timer ───────────────────────────────
     useEffect(() => {
@@ -204,60 +385,23 @@ export default function WorkoutSessionScreen() {
         };
     }, [session, elapsed, restored]);
 
+    // ─── Back Navigation — just save silently ─
+    useEffect(() => {
+        const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
+            if (finishing) return;
+
+            // Always save the current session before leaving
+            saveActiveSession({ ...session, totalDuration: elapsed });
+            // Let the navigation proceed — session stays in AsyncStorage
+        });
+        return unsubscribe;
+    }, [navigation, session, elapsed, finishing]);
+
     // ─── Update Helpers ──────────────────────
 
     const updateSession = useCallback((updater: (prev: WorkoutSession) => WorkoutSession) => {
         setSession(updater);
     }, []);
-
-    const updateTitle = useCallback((title: string) => {
-        updateSession((prev) => ({ ...prev, title }));
-    }, [updateSession]);
-
-    const addExercise = useCallback(() => {
-        updateSession((prev) => ({
-            ...prev,
-            exercises: [...prev.exercises, createExercise()],
-        }));
-    }, [updateSession]);
-
-    const removeExercise = useCallback((exerciseId: string) => {
-        updateSession((prev) => ({
-            ...prev,
-            exercises: prev.exercises.filter((e) => e.id !== exerciseId),
-        }));
-    }, [updateSession]);
-
-    const updateExerciseName = useCallback((exerciseId: string, name: string) => {
-        updateSession((prev) => ({
-            ...prev,
-            exercises: prev.exercises.map((e) =>
-                e.id === exerciseId ? { ...e, name } : e,
-            ),
-        }));
-    }, [updateSession]);
-
-    const addSet = useCallback((exerciseId: string) => {
-        updateSession((prev) => ({
-            ...prev,
-            exercises: prev.exercises.map((e) =>
-                e.id === exerciseId
-                    ? { ...e, sets: [...e.sets, createSet()] }
-                    : e,
-            ),
-        }));
-    }, [updateSession]);
-
-    const removeSet = useCallback((exerciseId: string, setId: string) => {
-        updateSession((prev) => ({
-            ...prev,
-            exercises: prev.exercises.map((e) =>
-                e.id === exerciseId
-                    ? { ...e, sets: e.sets.filter((s) => s.id !== setId) }
-                    : e,
-            ),
-        }));
-    }, [updateSession]);
 
     const updateSet = useCallback(
         (exerciseId: string, setId: string, field: keyof WorkoutSet, value: string | number | boolean) => {
@@ -294,19 +438,68 @@ export default function WorkoutSessionScreen() {
         }));
     }, [updateSession]);
 
+    const removeSet = useCallback((exerciseId: string, setId: string) => {
+        updateSession((prev) => ({
+            ...prev,
+            exercises: prev.exercises.map((e) =>
+                e.id === exerciseId
+                    ? { ...e, sets: e.sets.filter((s) => s.id !== setId) }
+                    : e,
+            ),
+        }));
+    }, [updateSession]);
+
+    const addExercise = useCallback(() => {
+        const newEx: WorkoutExercise = {
+            id: uid(),
+            name: "",
+            isCustom: true,
+            sets: [
+                { id: uid(), weight: 0, reps: 0, unit: "kg", completed: false },
+            ],
+        };
+        updateSession((prev) => ({
+            ...prev,
+            exercises: [...prev.exercises, newEx],
+        }));
+    }, [updateSession]);
+
+    const removeExercise = useCallback((exerciseId: string) => {
+        updateSession((prev) => ({
+            ...prev,
+            exercises: prev.exercises.filter((e) => e.id !== exerciseId),
+        }));
+    }, [updateSession]);
+
+    const addSetToExercise = useCallback((exerciseId: string) => {
+        updateSession((prev) => ({
+            ...prev,
+            exercises: prev.exercises.map((e) =>
+                e.id === exerciseId
+                    ? { ...e, sets: [...e.sets, { id: uid(), weight: 0, reps: 0, unit: "kg" as const, completed: false }] }
+                    : e
+            ),
+        }));
+    }, [updateSession]);
+
+    const updateExerciseName = useCallback((exerciseId: string, name: string) => {
+        updateSession((prev) => ({
+            ...prev,
+            exercises: prev.exercises.map((e) =>
+                e.id === exerciseId ? { ...e, name } : e
+            ),
+        }));
+    }, [updateSession]);
+
     // ─── Finish Workout ──────────────────────
 
     const finishWorkout = async () => {
-        // Validate: at least one named exercise with one set
         const validExercises = session.exercises.filter(
             (e) => e.name.trim().length > 0 && e.sets.some((s) => s.weight > 0 || s.reps > 0),
         );
 
         if (validExercises.length === 0) {
-            Alert.alert(
-                "Eksik Bilgi",
-                "En az bir egzersiz adı ve bir set bilgisi girmelisiniz.",
-            );
+            Alert.alert("Eksik Bilgi", "En az bir egzersiz adı ve bir set bilgisi girmelisiniz.");
             return;
         }
 
@@ -318,59 +511,131 @@ export default function WorkoutSessionScreen() {
                 exercises: validExercises,
                 completedAt: new Date().toISOString(),
                 totalDuration: elapsed,
+                totalVolume: validExercises.reduce((total, ex) =>
+                    total + ex.sets.reduce((s, set) => s + (set.weight * set.reps), 0), 0
+                ),
                 status: "completed",
             };
 
-            console.log(
-                "[WorkoutSession] Antrenman verisi hazırlandı —",
-                "exercises:", completedSession.exercises.length,
-                "sets:", completedSession.exercises.reduce((sum, ex) => sum + ex.sets.length, 0),
-                "duration:", completedSession.totalDuration,
-            );
-            console.log("Kaydedilecek Veri:", JSON.stringify(completedSession, null, 2));
-
-            // Save to pending queue (outbox)
             await savePendingWorkout(completedSession);
-
-            // Clear active session
             await clearActiveSession();
-            console.log("[WorkoutSession] Aktif oturum temizlendi, navigasyon başlıyor");
 
-            // Attempt immediate sync (best-effort)
             syncPendingWorkouts().catch((err) => {
-                console.warn("[WorkoutSession] Anlık senkronizasyon başarısız, yeniden denenecek:", err);
+                console.warn("[WorkoutSession] Sync hatası:", err);
             });
 
-            // Navigate back
-            navigation.goBack();
-        } catch (error) {
-            console.error("[WorkoutSession] ❌ Kaydetme hatası:", error);
-            Alert.alert(
-                "Kaydetme Hatası",
-                "Antrenman verisi kaydedilirken bir hata oluştu. Lütfen tekrar deneyin.",
+            // ── Compute summary stats ──
+            const totalVolume = validExercises.reduce((total, ex) =>
+                total + ex.sets.reduce((s, set) => s + (set.weight * set.reps), 0), 0
             );
+            const setCount = validExercises.reduce((total, ex) => total + ex.sets.length, 0);
+
+            // ── Advance cycle day if linked to a program ──
+            const programId = route.params?.programId;
+            const programData = route.params?.programData as any;
+            const dayIndex = route.params?.dayIndex ?? 0;
+            const isCycle = programData && Array.isArray(programData.days) && programData.days.length > 0;
+
+            let nextDayLabel: string | undefined;
+            let dayLabel: string | undefined;
+
+            if (programId && isCycle) {
+                try {
+                    const nextIndex = (dayIndex + 1) % programData.days.length;
+                    dayLabel = programData.days[dayIndex]?.label;
+                    nextDayLabel = programData.days[nextIndex]?.label;
+                    await programApi.advanceDay(programId);
+                } catch (err) {
+                    console.warn("[WorkoutSession] advanceDay hatası:", err);
+                }
+            }
+
+            // ── Navigate to Summary ──
+            (navigation as any).replace("WorkoutSummary", {
+                programId,
+                programName: route.params?.programName,
+                dayLabel,
+                nextDayLabel,
+                totalVolume: Math.round(totalVolume),
+                duration: elapsed,
+                exerciseCount: validExercises.length,
+                setCount,
+            });
+        } catch (error) {
+            console.error("[WorkoutSession] Kaydetme hatası:", error);
+            Alert.alert("Kaydetme Hatası", "Antrenman verisi kaydedilirken bir hata oluştu.");
         } finally {
             setFinishing(false);
         }
     };
 
     const cancelWorkout = () => {
+        // Check if any sets have been filled in
+        const hasData = session.exercises.some((ex) =>
+            ex.sets.some((s) => s.weight > 0 || s.reps > 0)
+        );
+
+        const doCancel = async () => {
+            // Stop the timer immediately
+            if (intervalRef.current) {
+                clearInterval(intervalRef.current);
+                intervalRef.current = null;
+            }
+            if (saveTimerRef.current) {
+                clearTimeout(saveTimerRef.current);
+                saveTimerRef.current = null;
+            }
+            await clearActiveSession();
+            navigation.goBack();
+        };
+
+        const doSaveAndLeave = async () => {
+            // Save current session to AsyncStorage so user can continue later
+            await saveActiveSession({ ...session, totalDuration: elapsed });
+            navigation.goBack();
+        };
+
+        if (!hasData) {
+            // Nothing entered — session doesn't count, exit immediately
+            doCancel();
+            return;
+        }
+
+        // Data exists — give user 3 options
         Alert.alert(
-            "Antrenmanı İptal Et",
-            "Bu antrenman kaydedilmeyecek. Emin misiniz?",
+            "Antrenman Devam Ediyor",
+            "Verileriniz kayıtlı. Ne yapmak istersiniz?",
             [
-                { text: "Hayır", style: "cancel" },
                 {
-                    text: "Evet, İptal Et",
+                    text: "Vazgeç",
+                    style: "cancel",
+                },
+                {
+                    text: "Kaydet ve Çık",
+                    onPress: doSaveAndLeave,
+                },
+                {
+                    text: "İptal Et",
                     style: "destructive",
-                    onPress: async () => {
-                        await clearActiveSession();
-                        navigation.goBack();
+                    onPress: () => {
+                        Alert.alert(
+                            "Emin misiniz?",
+                            "Antrenman tamamen silinecek ve geri alınamaz.",
+                            [
+                                { text: "Hayır", style: "cancel" },
+                                {
+                                    text: "Evet, Sil",
+                                    style: "destructive",
+                                    onPress: doCancel,
+                                },
+                            ],
+                        );
                     },
                 },
             ],
         );
     };
+
 
     // ─── Format Helpers ──────────────────────
 
@@ -384,6 +649,16 @@ export default function WorkoutSessionScreen() {
 
     // ─── Render Helpers ──────────────────────
 
+    const cycleMode = () => {
+        setRpeMode((prev) => {
+            if (prev === "rpe") return "rir";
+            if (prev === "rir") return "both";
+            return "rpe";
+        });
+    };
+
+    const modeLabelMap = { rpe: "RPE", rir: "RIR", both: "RPE+RIR" };
+
     const renderHeader = () => (
         <View style={styles.listHeader}>
             <View style={styles.header}>
@@ -395,14 +670,21 @@ export default function WorkoutSessionScreen() {
                     <Ionicons name="close" size={28} color={colors.textSecondary} />
                 </TouchableOpacity>
 
-                <View style={{ flexDirection: "row", alignItems: "center" }}>
+                <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
                     <TouchableOpacity
                         style={styles.rirToggleBtn}
-                        onPress={() => setIsRirMode(!isRirMode)}
+                        onPress={cycleMode}
                     >
                         <Text style={styles.rirToggleText}>
-                            {isRirMode ? "RIR MODE" : "RPE MODE"}
+                            {modeLabelMap[rpeMode]}
                         </Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                        style={[styles.rirToggleBtn, { borderColor: colors.accent }]}
+                        onPress={addExercise}
+                    >
+                        <Ionicons name="add" size={16} color={colors.accent} />
                     </TouchableOpacity>
 
                     <View style={styles.timerContainer}>
@@ -412,27 +694,14 @@ export default function WorkoutSessionScreen() {
                 </View>
             </View>
 
-            <TextInput
-                style={styles.titleInput}
-                value={session.title}
-                onChangeText={updateTitle}
-                placeholder="Antrenman Adı"
-                placeholderTextColor={colors.textMuted}
-                selectionColor={colors.accent}
-            />
+            <Text style={styles.titleText}>
+                {session.title || "Program Antrenmanı"}
+            </Text>
         </View>
     );
 
     const renderFooter = () => (
         <View style={styles.listFooter}>
-            <AccentButton
-                title="+ Egzersiz Ekle"
-                onPress={addExercise}
-                variant="outline"
-                size="lg"
-                style={styles.addExerciseBtn}
-            />
-
             <AccentButton
                 title="✅  Antrenmanı Bitir"
                 onPress={finishWorkout}
@@ -457,36 +726,65 @@ export default function WorkoutSessionScreen() {
                             <Text style={styles.exerciseIndexText}>{exIndex + 1}</Text>
                         </View>
 
-                        <TextInput
-                            style={styles.exerciseNameInput}
-                            value={exercise.name}
-                            onChangeText={(text) => updateExerciseName(exercise.id, text)}
-                            placeholder="Egzersiz adı (ör: Bench Press)"
-                            placeholderTextColor={colors.textMuted}
-                            selectionColor={colors.accent}
-                        />
+                        {exercise.isCustom ? (
+                            <TextInput
+                                style={[styles.exerciseNameText, { flex: 1, borderBottomWidth: 1, borderBottomColor: colors.border, paddingBottom: 2 }]}
+                                value={exercise.name}
+                                onChangeText={(text) => updateExerciseName(exercise.id, text)}
+                                placeholder="Egzersiz adı..."
+                                placeholderTextColor={colors.textMuted}
+                                selectionColor={colors.accent}
+                            />
+                        ) : (
+                            <Text style={styles.exerciseNameText} numberOfLines={1}>
+                                {exercise.name}
+                            </Text>
+                        )}
 
-                        {session.exercises.length > 1 && (
+                        {exercise.isCustom && (
                             <TouchableOpacity
                                 onPress={() => removeExercise(exercise.id)}
                                 hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                style={{ paddingLeft: spacing.sm }}
                             >
                                 <Ionicons name="trash-outline" size={20} color={colors.error} />
                             </TouchableOpacity>
                         )}
                     </View>
 
+                    {isAutoSuggestEnabled && (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: colors.surfaceElevated, alignSelf: 'flex-start', paddingHorizontal: spacing.sm, paddingVertical: 4, borderRadius: borderRadius.sm, marginBottom: spacing.md }}>
+                            <Ionicons name="sparkles" size={14} color={colors.accent} style={{ marginRight: 4 }} />
+                            <Text style={{ color: colors.accent, fontSize: fontSize.xs, fontWeight: fontWeight.bold }}>
+                                AI Önerisi: {exercise.targetWeight ? (parseFloat(exercise.targetWeight) + 2.5) : "+2.5"} kg
+                            </Text>
+                        </View>
+                    )}
+
                     <View style={styles.setHeaderRow}>
                         <Text style={[styles.setHeaderText, { flex: 0.5 }]}>SET</Text>
                         <Text style={[styles.setHeaderText, { flex: 1 }]}>KG</Text>
                         <Text style={[styles.setHeaderText, { flex: 1 }]}>TEKRAR</Text>
-                        <Text style={[styles.setHeaderText, { flex: 0.8 }]}>{isRirMode ? "RIR" : "RPE"}</Text>
+                        {(rpeMode === "rpe" || rpeMode === "both") && (
+                            <Text style={[styles.setHeaderText, { flex: 0.8 }]}>RPE</Text>
+                        )}
+                        {(rpeMode === "rir" || rpeMode === "both") && (
+                            <Text style={[styles.setHeaderText, { flex: 0.8 }]}>RIR</Text>
+                        )}
                     </View>
 
-                    {exercise.sets.map((set: WorkoutSet, setIndex: number, setsArray: WorkoutSet[]) => (
-                        <View key={set.id} style={styles.setRow}>
-                            <Text style={[styles.setNumber, { flex: 0.5 }]}>
-                                {setIndex + 1}
+                    {(() => {
+                        let warmupCount = 0;
+                        let workingCount = 0;
+                        return exercise.sets.map((set: WorkoutSet, setIndex: number) => {
+                            const isWarmup = !!set.isWarmup;
+                            if (isWarmup) warmupCount++;
+                            else workingCount++;
+                            const label = isWarmup ? `W${warmupCount}` : `${workingCount}`;
+                            return (
+                        <View key={set.id} style={[styles.setRow, isWarmup && { opacity: 0.7, borderLeftWidth: 3, borderLeftColor: colors.textMuted, paddingLeft: spacing.xs }]}>
+                            <Text style={[styles.setNumber, { flex: 0.5 }, isWarmup && { fontStyle: "italic" as const, color: colors.textMuted }]}>
+                                {label}
                             </Text>
 
                             <View style={[styles.inputWrapper, { flex: 1 }]}>
@@ -496,12 +794,15 @@ export default function WorkoutSessionScreen() {
                                     value={getTextValue(exercise.id, set.id, "weight", set.weight)}
                                     onChangeText={(text) => {
                                         onNumericChange(exercise.id, set.id, "weight", text);
-                                        // Auto-complete set logically based on input change, no need for checkmark
                                         if (text.trim() && !set.completed) toggleSetCompleted(exercise.id, set.id);
                                     }}
                                     onBlur={() => onNumericBlur(exercise.id, set.id, "weight")}
-                                    placeholder="0"
-                                    placeholderTextColor={colors.textMuted}
+                                    placeholder={set.targetWeight ?? exercise.targetWeight ?? "0"}
+                                    placeholderTextColor={
+                                        (set.targetWeight || exercise.targetWeight)
+                                            ? colors.accentDark
+                                            : colors.textMuted
+                                    }
                                     keyboardType="decimal-pad"
                                     selectionColor={colors.accent}
                                     returnKeyType="next"
@@ -520,8 +821,12 @@ export default function WorkoutSessionScreen() {
                                         if (text.trim() && !set.completed) toggleSetCompleted(exercise.id, set.id);
                                     }}
                                     onBlur={() => onNumericBlur(exercise.id, set.id, "reps", true)}
-                                    placeholder="0"
-                                    placeholderTextColor={colors.textMuted}
+                                    placeholder={set.targetReps ?? exercise.targetReps ?? "0"}
+                                    placeholderTextColor={
+                                        (set.targetReps || exercise.targetReps)
+                                            ? colors.accentDark
+                                            : colors.textMuted
+                                    }
                                     keyboardType="number-pad"
                                     selectionColor={colors.accent}
                                     returnKeyType="next"
@@ -530,6 +835,7 @@ export default function WorkoutSessionScreen() {
                                 />
                             </View>
 
+                            {(rpeMode === "rpe" || rpeMode === "both") && (
                             <View style={[styles.inputWrapper, { flex: 0.8 }]}>
                                 <TextInput
                                     ref={(el) => { inputRefs.current[`ex-${exIndex}-set-${setIndex}-rpe`] = el; }}
@@ -537,26 +843,62 @@ export default function WorkoutSessionScreen() {
                                     value={getTextValue(exercise.id, set.id, "rpe", set.rpe ?? 0)}
                                     onChangeText={(text) => onNumericChange(exercise.id, set.id, "rpe", text)}
                                     onBlur={() => onNumericBlur(exercise.id, set.id, "rpe")}
-                                    placeholder="—"
-                                    placeholderTextColor={colors.textMuted}
-                                    keyboardType="decimal-pad"
+                                    placeholder={
+                                        (set.targetRPE || exercise.targetRPE)
+                                            ? `${set.targetRPE ?? exercise.targetRPE}`
+                                            : "—"
+                                    }
+                                    placeholderTextColor={colors.accentDark}
+                                    keyboardType="number-pad"
                                     selectionColor={colors.accent}
                                     returnKeyType="next"
                                     onSubmitEditing={() => focusNext(exIndex, setIndex, "rpe")}
                                     blurOnSubmit={false}
                                 />
                             </View>
-                        </View>
-                    ))}
+                            )}
 
-                    <TouchableOpacity
-                        style={styles.addSetBtn}
-                        onPress={() => addSet(exercise.id)}
-                        activeOpacity={0.7}
-                    >
-                        <Ionicons name="add" size={18} color={colors.accent} />
-                        <Text style={styles.addSetText}>Set Ekle</Text>
-                    </TouchableOpacity>
+                            {(rpeMode === "rir" || rpeMode === "both") && (
+                            <View style={[styles.inputWrapper, { flex: 0.8 }]}>
+                                <TextInput
+                                    style={styles.numericInput}
+                                    value={getTextValue(exercise.id, set.id, "rir" as any, (set as any).rir ?? "")}
+                                    onChangeText={(text) => onNumericChange(exercise.id, set.id, "rir" as any, text)}
+                                    onBlur={() => onNumericBlur(exercise.id, set.id, "rir" as any)}
+                                    placeholder={
+                                        (set.targetRIR || exercise.targetRIR)
+                                            ? `${set.targetRIR ?? exercise.targetRIR}`
+                                            : "—"
+                                    }
+                                    placeholderTextColor={colors.accentDark}
+                                    keyboardType="number-pad"
+                                    selectionColor={colors.accent}
+                                />
+                            </View>
+                            )}
+
+                            <TouchableOpacity
+                                onPress={() => removeSet(exercise.id, set.id)}
+                                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                                style={{ paddingLeft: 4 }}
+                            >
+                                <Ionicons name="trash-outline" size={18} color={colors.textMuted} />
+                            </TouchableOpacity>
+                        </View>
+                            );
+                        });
+                    })()}
+
+                    {exercise.isCustom && (
+                        <TouchableOpacity
+                            style={styles.addSetBtn}
+                            onPress={() => addSetToExercise(exercise.id)}
+                        >
+                            <Ionicons name="add-circle-outline" size={16} color={colors.accent} />
+                            <Text style={styles.addSetText}>Set Ekle</Text>
+                        </TouchableOpacity>
+                    )}
+
                 </View>
             </ScaleDecorator>
         );
@@ -589,7 +931,7 @@ export default function WorkoutSessionScreen() {
 
 // ─── Styles ─────────────────────────────────
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: colors.background,
@@ -646,14 +988,12 @@ const styles = StyleSheet.create({
     },
 
     // Title
-    titleInput: {
+    titleText: {
         fontSize: fontSize.xxl,
         fontWeight: fontWeight.heavy,
         color: colors.text,
         marginBottom: spacing.xxl,
         paddingVertical: spacing.sm,
-        borderBottomWidth: 2,
-        borderBottomColor: colors.border,
     },
 
     // Exercise Card
@@ -684,14 +1024,12 @@ const styles = StyleSheet.create({
         fontWeight: fontWeight.bold,
         color: colors.accent,
     },
-    exerciseNameInput: {
+    exerciseNameText: {
         flex: 1,
         fontSize: fontSize.lg,
         fontWeight: fontWeight.semibold,
         color: colors.text,
         paddingVertical: spacing.xs,
-        borderBottomWidth: 1,
-        borderBottomColor: colors.borderLight,
         marginRight: spacing.sm,
     },
 
@@ -794,7 +1132,15 @@ const styles = StyleSheet.create({
 
     // Add Exercise
     addExerciseBtn: {
-        marginBottom: spacing.lg,
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: spacing.md,
+        marginBottom: spacing.md,
+        borderWidth: 1.5,
+        borderColor: colors.accent,
+        borderRadius: borderRadius.md,
+        borderStyle: "dashed",
     },
 
     // Finish

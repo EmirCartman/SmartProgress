@@ -27,6 +27,11 @@ function generateId(): string {
  * Convert a completed WorkoutSession into the API payload format.
  */
 function sessionToPayload(session: WorkoutSession): SyncWorkoutPayload {
+    // Hacim: Σ (weight × reps) sadece dolu setler üzerinden
+    const totalVolume = session.exercises.reduce((total, ex) => (
+        total + ex.sets.reduce((s, set) => s + (set.weight * set.reps), 0)
+    ), 0);
+
     return {
         sportId: session.sportId,
         title: session.title,
@@ -39,9 +44,13 @@ function sessionToPayload(session: WorkoutSession): SyncWorkoutPayload {
                         reps: s.reps,
                         weight: s.weight,
                         unit: s.unit,
+                        rpe: s.rpe ?? undefined,
+                        rir: (s as any).rir ?? undefined,
+                        isWarmup: s.isWarmup ?? false,
                     })),
             })).filter((ex) => ex.sets.length > 0),
             totalDuration: session.totalDuration,
+            totalVolume: Math.round(totalVolume),
         },
         logDate: session.completedAt || new Date().toISOString(),
     };

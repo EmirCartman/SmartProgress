@@ -5,8 +5,9 @@
 import axios, { AxiosError } from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SyncWorkoutPayload } from "../types/workout";
+// const API_BASE_URL = "http://10.22.157.20:3000/api/v1";
 
-const API_BASE_URL = "http://10.196.14.180:3000/api/v1";
+const API_BASE_URL = "http://192.168.1.103:3000/api/v1";
 
 // ─── Error Types ─────────────────────────────
 
@@ -42,6 +43,14 @@ export function parseApiError(error: unknown): ApiError {
     };
 }
 
+// ─── Global Logout Callback ──────────────
+// AuthContext registers this so the 401 interceptor can fully reset app state.
+
+let _logoutCallback: (() => void) | null = null;
+export function setLogoutCallback(cb: () => void) {
+    _logoutCallback = cb;
+}
+
 // ─── Axios Instance ──────────────────────────
 
 const api = axios.create({
@@ -71,9 +80,10 @@ api.interceptors.response.use(
     (response) => response,
     async (error) => {
         if (error.response?.status === 401) {
-            // Token expired — clear storage
+            // Token expired or user deleted — clear storage and reset app state
             await AsyncStorage.removeItem("auth_token");
             await AsyncStorage.removeItem("user");
+            _logoutCallback?.();
         }
         return Promise.reject(error);
     },
@@ -93,6 +103,13 @@ export const authApi = {
         api.post("/auth/login", data),
 
     getProfile: () => api.get("/auth/me"),
+
+    updateProfile: (data: {
+        firstName?: string;
+        lastName?: string;
+        nickname?: string;
+        settings?: Record<string, any>;
+    }) => api.patch("/auth/me", data),
 };
 
 // ─── Workout Endpoints ───────────────────────
@@ -103,12 +120,14 @@ export const workoutApi = {
 
     list: (params?: { limit?: number; offset?: number }) =>
         api.get("/workouts", { params }),
+
+    delete: (id: string) => api.delete(`/workouts/${id}`),
 };
 
 // ─── Program Endpoints ───────────────────────
 
 export const programApi = {
-    create: (data: { name: string; description?: string; isPublic?: boolean; data?: any }) =>
+    create: (data: { name: string; description?: string; isPublic?: boolean; frequency?: number; data?: any }) =>
         api.post("/programs", data),
 
     getById: (id: string) => api.get(`/programs/${id}`),
@@ -123,6 +142,18 @@ export const programApi = {
 
     suggestWeight: (exerciseName: string) =>
         api.get(`/programs/suggest/${encodeURIComponent(exerciseName)}`),
+
+    /** Advance currentDayIndex by 1 (for cycle-based programs) */
+    advanceDay: (id: string) =>
+        api.patch(`/programs/${id}/advance-day`),
+
+    /** Delete a program by ID */
+    deleteProgram: (id: string) => api.delete(`/programs/${id}`),
+
+    /** Update a program */
+    update: (id: string, data: { name?: string; description?: string; isPublic?: boolean; frequency?: number; data?: any }) =>
+        api.put(`/programs/${id}`, data),
 };
 
 export default api;
+

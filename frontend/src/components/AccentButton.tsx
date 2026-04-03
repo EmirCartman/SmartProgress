@@ -10,7 +10,8 @@ import {
     ViewStyle,
     ActivityIndicator,
 } from "react-native";
-import { colors, borderRadius, spacing, fontSize, fontWeight } from "../constants/theme";
+import { borderRadius, spacing, fontSize, fontWeight } from "../constants/theme";
+import { useTheme } from "../hooks/ThemeContext";
 
 interface AccentButtonProps {
     title: string;
@@ -33,8 +34,10 @@ export default function AccentButton({
     disabled = false,
     icon,
 }: AccentButtonProps) {
+    const { colors } = useTheme();
     const isPrimary = variant === "primary";
     const isOutline = variant === "outline";
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
 
     return (
         <TouchableOpacity
@@ -75,7 +78,7 @@ export default function AccentButton({
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
     base: {
         flexDirection: "row",
         alignItems: "center",

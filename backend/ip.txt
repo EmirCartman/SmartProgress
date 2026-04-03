@@ -1,0 +1,60 @@
+﻿
+Windows IP Configuration
+
+
+Ethernet adapter Ethernet:
+
+   Media State . . . . . . . . . . . : Media disconnected
+   Connection-specific DNS Suffix  . : 
+
+Unknown adapter Yerel Ağ Bağlantısı:
+
+   Media State . . . . . . . . . . . : Media disconnected
+   Connection-specific DNS Suffix  . : 
+
+Wireless LAN adapter Yerel Ağ Bağlantısı* 9:
+
+   Media State . . . . . . . . . . . : Media disconnected
+   Connection-specific DNS Suffix  . : 
+
+Wireless LAN adapter Yerel Ağ Bağlantısı* 10:
+
+   Media State . . . . . . . . . . . : Media disconnected
+   Connection-specific DNS Suffix  . : 
+
+Ethernet adapter VMware Network Adapter VMnet1:
+
+   Connection-specific DNS Suffix  . : 
+   Link-local IPv6 Address . . . . . : fe80::6372:b7e6:454:78dd%4
+   IPv4 Address. . . . . . . . . . . : 192.168.188.1
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 
+
+Ethernet adapter VMware Network Adapter VMnet8:
+
+   Connection-specific DNS Suffix  . : 
+   Link-local IPv6 Address . . . . . : fe80::f154:771e:6fb0:9d75%10
+   IPv4 Address. . . . . . . . . . . : 192.168.15.1
+   Subnet Mask . . . . . . . . . . . : 255.255.255.0
+   Default Gateway . . . . . . . . . : 
+
+Wireless LAN adapter Wi-Fi:
+
+   Connection-specific DNS Suffix  . : turktelekomwifi.com
+   Link-local IPv6 Address . . . . . : fe80::a37b:f52a:7477:8f32%7
+   IPv4 Address. . . . . . . . . . . : 10.22.157.20
+   Subnet Mask . . . . . . . . . . . : 255.255.0.0
+   Default Gateway . . . . . . . . . : 10.22.0.1
+
+Ethernet adapter Bluetooth Ağ Bağlantısı:
+
+   Media State . . . . . . . . . . . : Media disconnected
+   Connection-specific DNS Suffix  . : 
+
+Ethernet adapter vEthernet (WSL (Hyper-V firewall)):
+
+   Connection-specific DNS Suffix  . : 
+   Link-local IPv6 Address . . . . . : fe80::f93e:dc02:381d:5da1%95
+   IPv4 Address. . . . . . . . . . . : 172.24.224.1
+   Subnet Mask . . . . . . . . . . . : 255.255.240.0
+   Default Gateway . . . . . . . . . : 

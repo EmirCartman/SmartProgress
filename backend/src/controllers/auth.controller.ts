@@ -29,6 +29,13 @@ const loginSchema = z.object({
     password: z.string().min(1, "Password is required"),
 });
 
+const updateProfileSchema = z.object({
+    firstName: z.string().min(1).max(50).optional(),
+    lastName: z.string().min(1).max(50).optional(),
+    nickname: z.string().max(50).optional(),
+    settings: z.record(z.any()).optional(),
+});
+
 // ─── Controller ──────────────────────────────
 
 export class AuthController {
@@ -78,6 +85,25 @@ export class AuthController {
             next(error);
         }
     }
+
+    /**
+     * PATCH /me  (protected) — Update profile
+     */
+    async updateProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
+        try {
+            const userId = req.user!.userId;
+            const parsed = updateProfileSchema.safeParse(req.body);
+            if (!parsed.success) {
+                throw new ValidationError("Validation failed", parsed.error.flatten());
+            }
+
+            const profile = await authService.updateProfile(userId, parsed.data);
+            res.status(200).json(profile);
+        } catch (error) {
+            next(error);
+        }
+    }
 }
 
 export const authController = new AuthController();
+

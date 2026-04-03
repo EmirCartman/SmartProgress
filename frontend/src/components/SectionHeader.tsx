@@ -4,7 +4,8 @@
 // ─────────────────────────────────────────────
 import React from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
-import { colors, spacing, fontSize, fontWeight } from "../constants/theme";
+import { spacing, fontSize, fontWeight } from "../constants/theme";
+import { useTheme } from "../hooks/ThemeContext";
 
 interface SectionHeaderProps {
     title: string;
@@ -17,6 +18,9 @@ export default function SectionHeader({
     actionLabel,
     onAction,
 }: SectionHeaderProps) {
+    const { colors } = useTheme();
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
+
     return (
         <View style={styles.container}>
             <Text style={styles.title}>{title}</Text>
@@ -29,7 +33,7 @@ export default function SectionHeader({
     );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (colors: any) => StyleSheet.create({
     container: {
         flexDirection: "row",
         justifyContent: "space-between",

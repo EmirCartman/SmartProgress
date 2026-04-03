@@ -2,13 +2,15 @@
 // SmartProgress — App Entry Point
 // ─────────────────────────────────────────────
 import React from "react";
-import { View, StyleSheet } from "react-native";
+import { StyleSheet } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import { NavigationContainer } from "@react-navigation/native";
 import { registerRootComponent } from "expo";
 import { AuthProvider } from "./store/AuthContext";
 import RootNavigator from "./navigation/RootNavigator";
 import { useSync } from "./hooks/useSync";
+import { ThemeProvider } from "./hooks/ThemeContext";
 import { colors } from "./constants/theme";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -45,11 +47,13 @@ function AppContent() {
 
 function App() {
     return (
-        <View style={styles.root}>
-            <AuthProvider>
-                <AppContent />
-            </AuthProvider>
-        </View>
+        <GestureHandlerRootView style={styles.root}>
+            <ThemeProvider>
+                <AuthProvider>
+                    <AppContent />
+                </AuthProvider>
+            </ThemeProvider>
+        </GestureHandlerRootView>
     );
 }
 

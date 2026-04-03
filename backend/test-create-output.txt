@@ -1,0 +1,2 @@
+SUCCESS CREATING: efe8b0e1-c8e9-4e59-8ebb-32c656be31ee
+STORED DATA: {"days":[{"label":"Day 1","exercises":[{"id":"ex1","name":"Squat","targetSets":[]}],"isRestDay":false}],"frequency":3}

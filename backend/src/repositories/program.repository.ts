@@ -65,6 +65,30 @@ export class ProgramRepository {
             orderBy: { createdAt: "desc" },
         });
     }
+
+    /**
+     * Update the currentDayIndex for a cycle-based program.
+     */
+    async updateDayIndex(id: string, newIndex: number): Promise<Program> {
+        return prisma.program.update({
+            where: { id },
+            data: { currentDayIndex: newIndex },
+        });
+    }
+
+    /**
+     * Generic update for a program.
+     */
+    async update(id: string, data: Prisma.ProgramUpdateInput): Promise<Program> {
+        return prisma.program.update({ where: { id }, data });
+    }
+
+    /**
+     * Delete a program by ID.
+     */
+    async deleteById(id: string): Promise<Program> {
+        return prisma.program.delete({ where: { id } });
+    }
 }
 
 export const programRepository = new ProgramRepository();
