@@ -1,104 +1,41 @@
 version: "3.9"
 
 services:
-  # ─────────────────────────────────────────────
-  # PostgreSQL 16
-  # ─────────────────────────────────────────────
-  postgres:
-    image: postgres:16-alpine
-    container_name: smartprogress-postgres
-    restart: unless-stopped
-    ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    environment:
-      POSTGRES_USER: emir
-      POSTGRES_PASSWORD: secretpassword
-      POSTGRES_DB: smartprogress
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - smartprogress-network
-    healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartprogress} -d ${POSTGRES_DB:-smartprogress_db}" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ─────────────────────────────────────────────
-  # Redis 7
-  # ─────────────────────────────────────────────
+  # Redis'i tutuyoruz çünkü RDS sadece SQL veritabanıdır.
   redis:
     image: redis:7-alpine
     container_name: smartprogress-redis
     restart: unless-stopped
-    ports:
-      - "${REDIS_PORT:-6379}:6379"
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis_data:/data
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
     networks:
       - smartprogress-network
-    healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-  # ─────────────────────────────────────────────
-  # Backend — Node.js / Express / Prisma
-  # ─────────────────────────────────────────────
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: ./backend
     container_name: smartprogress-backend
     restart: unless-stopped
     ports:
-      - "${BACKEND_PORT:-3000}:3000"
+      - "3000:3000"
     environment:
-      NODE_ENV: ${NODE_ENV:-development}
-      PORT: 3000
-      DATABASE_URL: postgresql://${POSTGRES_USER:-smartprogress}:${POSTGRES_PASSWORD:-smartprogress_secret}@postgres:5432/${POSTGRES_DB:-smartprogress_db}?schema=public
+      NODE_ENV: production
+      DATABASE_URL: ${DATABASE_URL} # GitHub Secrets'tan gelecek
       REDIS_URL: redis://redis:6379
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - redis
     networks:
       - smartprogress-network
 
-  # ─────────────────────────────────────────────
-  # Frontend — React Native (Expo Web)
-  # ─────────────────────────────────────────────
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    build: ./frontend
     container_name: smartprogress-frontend
     restart: unless-stopped
     ports:
-      - "${FRONTEND_PORT:-8081}:8081"
+      - "80:8081" # Dışarıdan 80 (HTTP) gelen isteği Expo Web'e yönlendirir
     environment:
-      EXPO_DEVTOOLS_LISTEN_ADDRESS: 0.0.0.0
-      API_URL: http://backend:3000
-    depends_on:
-      - backend
+      API_URL: http://${AWS_HOST}:3000
     networks:
       - smartprogress-network
 
-# ─────────────────────────────────────────────
-# Volumes
-# ─────────────────────────────────────────────
-volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
-
-# ─────────────────────────────────────────────
-# Networks
-# ─────────────────────────────────────────────
 networks:
   smartprogress-network:
     driver: bridge

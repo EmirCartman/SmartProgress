@@ -52,3 +52,33 @@ yarn-error.log*
 # ─────────────────────────────────────────────
 coverage/
 .nyc_output/
+
+
+# Terraform state files (çok önemli!)
+*.tfstate
+*.tfstate.*
+
+# Terraform cache / working directory
+.terraform/
+
+# Terraform lock file (genelde repo'ya eklenir, istersen silebilirsin bu satırı)
+# .terraform.lock.hcl
+
+# Sensitive variable files
+*.tfvars
+*.tfvars.json
+
+# Crash log
+crash.log
+
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# CLI config files
+.terraformrc
+terraform.rc
+
+.pem
