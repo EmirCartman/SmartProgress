@@ -7,7 +7,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SyncWorkoutPayload } from "../types/workout";
 // const API_BASE_URL = "http://10.22.157.20:3000/api/v1";
 
-const API_BASE_URL = "http://192.168.1.103:3000/api/v1";
+const API_BASE_URL = "http://3.71.189.248:3000/api/v1";
 
 // ─── Error Types ─────────────────────────────
 

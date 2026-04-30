@@ -37,7 +37,7 @@ services:
       NODE_ENV: production
       API_URL: http://3.71.189.248:3000 # Kendi sunucu IP'ni buraya yaz
     # Dockerfile'daki CMD'yi burada ezerek hata veren parametreyi düzeltiyoruz
-    command: npx expo start --web --host lan --non-interactive
+    command: [ "npx", "expo", "start", "--web", "--host", "lan", "--non-interactive" ]
     networks:
       - smartprogress-network
 
