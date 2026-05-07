@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@master
@@ -18,17 +18,21 @@ jobs:
           username: ${{ secrets.AWS_USERNAME }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Proje klasörüne git (yoksa oluştur)
             mkdir -p ~/smartprogress
             cd ~/smartprogress
             
-            # Eğer repo daha önce çekilmediyse clone yap, varsa pull yap
             if [ ! -d ".git" ]; then
               git clone https://github.com/${{ github.repository }}.git .
             else
               git pull origin main
             fi
             
-            # Docker imajlarını oluştur ve ayağa kaldır
+            # .env dosyasını oluştur (API_URL'i de buraya ekleyelim)
             echo "DATABASE_URL=${{ secrets.DATABASE_URL }}" > .env
-            sudo docker-compose up -d --build
+            echo "API_URL=http://3.79.148.219:3000/api/v1" >> .env
+            
+            # Eski konteynırları durdur (RAM tasarrufu için)
+            sudo docker compose down
+            
+            # Yeni sürümü tiresiz 'docker compose' ile inşa et
+            sudo docker compose up -d --build
