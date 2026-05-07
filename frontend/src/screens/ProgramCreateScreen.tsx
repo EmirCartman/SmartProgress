@@ -282,11 +282,17 @@ export default function ProgramCreateScreen() {
     // ─── Validation & Save ────────────────────
 
     const handleSave = () => {
+
+        console.log("1. handleSave tetiklendi");
+
         if (!name.trim()) {
             Alert.alert("Hata", "Lütfen programa bir isim verin.");
             return;
         }
         const hasExercises = days.some((d) => d.exercises.length > 0);
+
+        console.log("2. Egzersiz kontrolü:", hasExercises);
+
         if (!hasExercises) {
             Alert.alert("Hata", "En az bir güne egzersiz ekleyin.");
             return;
