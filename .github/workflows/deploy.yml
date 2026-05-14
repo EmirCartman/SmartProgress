@@ -1,24 +1,100 @@
-name: SmartProgress Deployment
+name: Deploy
 
 on:
   push:
-    branches: [ main ] # Kendi ana branch adını yaz
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
+    name: Deploy to production
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+    timeout-minutes: 30
 
-      - name: Deploy to EC2
-        uses: appleboy/ssh-action@master
-        with:
-          host: ${{ secrets.REMOTE_HOST }}
-          username: ${{ secrets.REMOTE_USER }}
-          key: ${{ secrets.SSH_PRIVATE_KEY }}
-          script: |
-            cd ~/smartprogress
-            git pull origin main
-            sudo docker compose up -d --build backend frontend
-            sudo docker system prune -f # Diski temiz tutmak için
+    steps:
+      - name: Prepare SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST || secrets.REMOTE_HOST }}
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY || secrets.SSH_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$EC2_HOST"
+          test -n "$EC2_SSH_KEY"
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$EC2_SSH_KEY" > ~/.ssh/smartprogress_deploy_key
+          chmod 600 ~/.ssh/smartprogress_deploy_key
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST || secrets.REMOTE_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER || secrets.REMOTE_USER }}
+          APP_DIR: ${{ secrets.APP_DIR }}
+        run: |
+          set -euo pipefail
+          USER_NAME="${EC2_USER:-ubuntu}"
+          REMOTE_APP_DIR="${APP_DIR:-/home/ubuntu/smartprogress}"
+
+          ssh -i ~/.ssh/smartprogress_deploy_key \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            "$USER_NAME@$EC2_HOST" \
+            "APP_DIR='$REMOTE_APP_DIR' bash -se" <<'REMOTE'
+          set -Eeuo pipefail
+
+          cd "$APP_DIR"
+
+          echo "==> Checking repository"
+          git fetch origin main
+          git reset --hard origin/main
+
+          echo "==> Checking environment"
+          test -f .env
+          grep -q '^DATABASE_URL=' .env
+          grep -q '^JWT_SECRET=' .env
+
+          echo "==> Checking disk"
+          df -h
+          available_kb="$(df -Pk . | awk 'NR==2 { print $4 }')"
+          if [ "$available_kb" -lt 2097152 ]; then
+            echo "Not enough disk space for a safe Docker build. Need at least 2GB free."
+            exit 1
+          fi
+
+          echo "==> Validating compose config"
+          docker compose config >/tmp/smartprogress-compose.yml
+
+          echo "==> Building images"
+          docker compose build backend frontend
+
+          echo "==> Starting containers"
+          docker compose up -d redis backend frontend
+
+          echo "==> Running database migrations"
+          docker compose exec -T backend npx prisma migrate deploy
+
+          echo "==> Restarting app containers"
+          docker compose restart backend frontend
+
+          echo "==> Health check"
+          for attempt in $(seq 1 20); do
+            if curl -fsS http://localhost:3000/health; then
+              echo
+              echo "Deploy completed"
+              exit 0
+            fi
+            echo "Health check attempt $attempt failed; waiting..."
+            sleep 3
+          done
+
+          echo "Backend did not become healthy in time"
+          docker compose ps
+          docker logs smartprogress-backend --tail=120
+          exit 1
+          REMOTE

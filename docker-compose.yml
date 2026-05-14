@@ -38,7 +38,7 @@ services:
       EXPO_PUBLIC_API_URL: http://3.79.148.219:3000
       API_URL: http://3.79.148.219:3000 # Kendi sunucu IP'ni buraya yaz
     # Dockerfile'daki CMD'yi burada ezerek hata veren parametreyi düzeltiyoruz
-    command: [ "npx", "expo", "start", "--web", "--host", "lan", "--non-interactive", "--clear" ]
+    command: [ "npx", "expo", "start", "--web", "--host", "lan", "--clear" ]
     networks:
       - smartprogress-network
 
