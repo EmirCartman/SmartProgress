@@ -6,7 +6,8 @@ import axios, { AxiosError } from "axios";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { SyncWorkoutPayload } from "../types/workout";
 
-const API_BASE_URL = "http://3.79.148.219:3000/api/v1";
+const API_BASE_URL = "http://10.196.124.92:3000/api/v1";
+// const API_BASE_URL = "http://3.79.148.219:3000/api/v1"; // Remote
 
 // ─── Error Types ─────────────────────────────
 

@@ -167,39 +167,62 @@ async function updatePendingStatus(
     await savePendingWorkouts(updated);
 }
 
+// ─── Sync Result Type ────────────────────────
+
+export interface SyncResult {
+    synced: number;
+    failed: number;
+    pending: number;
+    permanentlyFailed: number;
+    errors: string[];
+    offline: boolean;
+}
+
 // ─── Sync Engine ─────────────────────────────
+
+const MAX_FAIL_COUNT = 5;
 
 /**
  * Attempt to sync all pending workouts to the backend.
- * Returns the number of successfully synced workouts.
+ * Returns a detailed result with success/failure counts and error messages.
  */
-export async function syncPendingWorkouts(): Promise<number> {
+export async function syncPendingWorkouts(): Promise<SyncResult> {
+    const result: SyncResult = {
+        synced: 0,
+        failed: 0,
+        pending: 0,
+        permanentlyFailed: 0,
+        errors: [],
+        offline: false,
+    };
+
     const online = await isOnline();
     if (!online) {
         console.log("[SyncService] Çevrimdışı — senkronizasyon atlandı");
-        return 0;
+        result.offline = true;
+        const pending = await getPendingWorkouts();
+        result.pending = pending.length;
+        return result;
     }
-
-    const MAX_FAIL_COUNT = 5;
 
     const pending = await getPendingWorkouts();
     const toSync = pending.filter(
         (w) => (w.syncStatus === "pending" || w.syncStatus === "failed") && w.failCount < MAX_FAIL_COUNT,
     );
 
-    // Log permanently failed workouts
     const permanentlyFailed = pending.filter((w) => w.failCount >= MAX_FAIL_COUNT);
+    result.permanentlyFailed = permanentlyFailed.length;
     if (permanentlyFailed.length > 0) {
         console.warn(`[SyncService] ${permanentlyFailed.length} antrenman ${MAX_FAIL_COUNT} denemeden sonra başarısız oldu, atlanıyor`);
     }
 
     if (toSync.length === 0) {
         console.log("[SyncService] Senkron edilecek antrenman yok");
-        return 0;
+        result.pending = pending.filter((w) => w.syncStatus === "pending").length;
+        return result;
     }
 
     console.log("[SyncService] Senkronizasyon başlatıldı —", toSync.length, "antrenman bekliyor");
-    let syncedCount = 0;
 
     // Sync one by one to handle partial failures gracefully
     for (const workout of toSync) {
@@ -211,20 +234,41 @@ export async function syncPendingWorkouts(): Promise<number> {
             await workoutApi.sync([payload]);
 
             await removeSyncedWorkout(workout.id);
-            syncedCount++;
+            result.synced++;
             console.log("[SyncService] ✅ Senkron edildi:", workout.id);
         } catch (error: any) {
             const respData = error?.response?.data;
             const status = error?.response?.status;
+            const errMsg = respData?.error || error?.message || "Bilinmeyen hata";
+
             console.error("[SyncService] ❌ Senkron hatası:", workout.id, "Status:", status);
             console.error("[SyncService] ❌ Backend yanıtı:", JSON.stringify(respData, null, 2));
             console.error("[SyncService] ❌ Hata mesajı:", error?.message);
+
+            result.failed++;
+            result.errors.push(`[${status || "NET"}] ${errMsg}`);
             await updatePendingStatus(workout.id, "failed");
         }
     }
 
-    console.log("[SyncService] Senkronizasyon tamamlandı —", syncedCount, "/", toSync.length, "başarılı");
-    return syncedCount;
+    // Recalculate pending count
+    const updatedPending = await getPendingWorkouts();
+    result.pending = updatedPending.filter((w) => w.syncStatus === "pending" || w.syncStatus === "failed").length;
+
+    console.log("[SyncService] Senkronizasyon tamamlandı —", result.synced, "/", toSync.length, "başarılı");
+    return result;
+}
+
+/**
+ * Get the count of pending workouts without triggering a sync.
+ */
+export async function getPendingWorkoutCount(): Promise<{ pending: number; failed: number; permanent: number }> {
+    const all = await getPendingWorkouts();
+    return {
+        pending: all.filter((w) => w.syncStatus === "pending" || w.syncStatus === "syncing").length,
+        failed: all.filter((w) => w.syncStatus === "failed" && w.failCount < MAX_FAIL_COUNT).length,
+        permanent: all.filter((w) => w.failCount >= MAX_FAIL_COUNT).length,
+    };
 }
 
 // ─── Active Session Persistence ──────────────

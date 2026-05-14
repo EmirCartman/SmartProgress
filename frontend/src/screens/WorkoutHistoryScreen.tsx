@@ -18,7 +18,7 @@ import DraggableFlatList, { RenderItemParams } from "react-native-draggable-flat
 import { spacing, fontSize, fontWeight, borderRadius } from "../constants/theme";
 import { useTheme } from "../hooks/ThemeContext";
 import { workoutApi } from "../services/api";
-import { syncPendingWorkouts } from "../services/syncService";
+import { syncPendingWorkouts, getPendingWorkoutCount, resetFailedWorkouts, clearAllPendingWorkouts } from "../services/syncService";
 import GymCard from "../components/GymCard";
 
 const FAVORITES_KEY = "workout_favorites";
@@ -37,8 +37,15 @@ export default function WorkoutHistoryScreen() {
     const [workouts, setWorkouts] = useState<WorkoutItem[]>([]);
     const [favorites, setFavorites] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(true);
+    const [syncing, setSyncing] = useState(false);
+    const [pendingInfo, setPendingInfo] = useState<{ pending: number; failed: number; permanent: number }>({ pending: 0, failed: 0, permanent: 0 });
 
     const styles = React.useMemo(() => createStyles(colors), [colors]);
+
+    const loadPendingInfo = async () => {
+        const info = await getPendingWorkoutCount();
+        setPendingInfo(info);
+    };
 
     const loadData = async () => {
         try {
@@ -62,11 +69,57 @@ export default function WorkoutHistoryScreen() {
             // Restore favorites
             const favsStr = await AsyncStorage.getItem(FAVORITES_KEY);
             if (favsStr) setFavorites(new Set(JSON.parse(favsStr)));
+
+            // Load pending info after sync attempt
+            await loadPendingInfo();
         } catch (err) {
             console.error("[WorkoutHistory] Load error:", err);
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleRetrySync = async () => {
+        setSyncing(true);
+        try {
+            await resetFailedWorkouts();
+            const result = await syncPendingWorkouts();
+            if (result.synced > 0) {
+                Alert.alert("Başarılı", `${result.synced} antrenman başarıyla senkronize edildi.`);
+                await loadData();
+            } else if (result.failed > 0) {
+                Alert.alert(
+                    "Senkronizasyon Hatası",
+                    `Antrenmanlar sunucuya gönderilemedi.\n\nHata: ${result.errors.join(", ")}`,
+                );
+            } else {
+                Alert.alert("Bilgi", "Bekleyen antrenman yok.");
+            }
+        } catch (err) {
+            Alert.alert("Hata", "Senkronizasyon sırasında bir hata oluştu.");
+        } finally {
+            setSyncing(false);
+            await loadPendingInfo();
+        }
+    };
+
+    const handleClearPending = () => {
+        Alert.alert(
+            "Bekleyen Antrenmanları Temizle",
+            "Sunucuya gönderilemeyen tüm yerel antrenman kayıtları silinecek. Bu işlem geri alınamaz.",
+            [
+                { text: "İptal", style: "cancel" },
+                {
+                    text: "Temizle",
+                    style: "destructive",
+                    onPress: async () => {
+                        await clearAllPendingWorkouts();
+                        await loadPendingInfo();
+                        Alert.alert("Temizlendi", "Bekleyen antrenman kayıtları silindi.");
+                    },
+                },
+            ],
+        );
     };
 
     useFocusEffect(useCallback(() => { loadData(); }, []));
@@ -207,12 +260,45 @@ export default function WorkoutHistoryScreen() {
                 </TouchableOpacity>
             </View>
 
-            {workouts.length === 0 ? (
+            {/* Pending Workouts Banner */}
+            {(pendingInfo.pending + pendingInfo.failed + pendingInfo.permanent) > 0 && (
+                <View style={[styles.pendingBanner, { backgroundColor: colors.accentMuted, borderColor: colors.accent }]}>
+                    <View style={{ flex: 1 }}>
+                        <Text style={[styles.pendingTitle, { color: colors.accent }]}>
+                            ⏳ {pendingInfo.pending + pendingInfo.failed + pendingInfo.permanent} bekleyen antrenman
+                        </Text>
+                        <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
+                            Sunucuya henüz gönderilemeyen kayıtlar var.
+                        </Text>
+                    </View>
+                    <View style={{ flexDirection: "row", gap: 8 }}>
+                        <TouchableOpacity
+                            onPress={handleRetrySync}
+                            disabled={syncing}
+                            style={[styles.pendingBtn, { backgroundColor: colors.accent }]}
+                        >
+                            {syncing ? (
+                                <ActivityIndicator size="small" color="#fff" />
+                            ) : (
+                                <Text style={styles.pendingBtnText}>Tekrar Dene</Text>
+                            )}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            onPress={handleClearPending}
+                            style={[styles.pendingBtn, { backgroundColor: colors.error }]}
+                        >
+                            <Text style={styles.pendingBtnText}>Temizle</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            )}
+
+            {workouts.length === 0 && (pendingInfo.pending + pendingInfo.failed + pendingInfo.permanent) === 0 ? (
                 <View style={styles.empty}>
                     <Ionicons name="barbell-outline" size={48} color={colors.textMuted} />
                     <Text style={styles.emptyText}>Henüz antrenman kaydınız yok.</Text>
                 </View>
-            ) : (
+            ) : workouts.length > 0 ? (
                 <DraggableFlatList
                     data={workouts}
                     keyExtractor={(item) => item.id}
@@ -220,7 +306,7 @@ export default function WorkoutHistoryScreen() {
                     onDragEnd={handleDragEnd}
                     contentContainerStyle={styles.list}
                 />
-            )}
+            ) : null}
         </View>
     );
 }
@@ -313,5 +399,36 @@ const createStyles = (colors: any) => StyleSheet.create({
         fontSize: fontSize.md,
         color: colors.textMuted,
         fontStyle: "italic",
+    },
+    pendingBanner: {
+        flexDirection: "row",
+        alignItems: "center",
+        marginHorizontal: spacing.lg,
+        marginTop: spacing.sm,
+        marginBottom: spacing.md,
+        padding: spacing.md,
+        borderRadius: borderRadius.md,
+        borderWidth: 1,
+    },
+    pendingTitle: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.bold,
+        marginBottom: 2,
+    },
+    pendingDesc: {
+        fontSize: fontSize.xs,
+    },
+    pendingBtn: {
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: borderRadius.sm,
+        alignItems: "center",
+        justifyContent: "center",
+        minHeight: 36,
+    },
+    pendingBtnText: {
+        color: "#fff",
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.bold,
     },
 });

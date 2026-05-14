@@ -521,9 +521,27 @@ export default function WorkoutSessionScreen() {
             await clearActiveSession();
 
             try {
-                await syncPendingWorkouts();
+                const syncResult = await syncPendingWorkouts();
+                if (syncResult.failed > 0) {
+                    Alert.alert(
+                        "Senkronizasyon Uyarısı",
+                        `Antrenman yerel olarak kaydedildi ancak sunucuya gönderilemedi.\n\n` +
+                        `Hata: ${syncResult.errors.join(", ")}\n\n` +
+                        `İnternet bağlantınızı kontrol edin. Sonraki giriş sırasında tekrar denenecek.`,
+                    );
+                } else if (syncResult.offline) {
+                    Alert.alert(
+                        "Çevrimdışı Kayıt",
+                        "Antrenman yerel olarak kaydedildi. İnternet bağlantısı sağlandığında otomatik olarak senkronize edilecek.",
+                    );
+                }
             } catch (err) {
                 console.warn("[WorkoutSession] Sync hatası (arka planda yeniden denenecek):", err);
+                Alert.alert(
+                    "Senkronizasyon Hatası",
+                    "Antrenman yerel olarak kaydedildi ancak sunucuya gönderilemedi. " +
+                    "Sonraki girişinizde tekrar denenecek.",
+                );
             }
 
             // ── Compute summary stats ──

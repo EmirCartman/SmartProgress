@@ -37,8 +37,10 @@ export class WorkoutRepository {
             // Ensure all referenced sports exist (auto-provision if missing)
             const sportIds = [...new Set(workouts.map((w) => w.sportId))];
             for (const sportId of sportIds) {
+                console.log(`[WorkoutRepo] Checking sport exists: ${sportId}`);
                 const exists = await tx.sport.findUnique({ where: { id: sportId } });
                 if (!exists) {
+                    console.log(`[WorkoutRepo] Sport not found, auto-provisioning: ${sportId}`);
                     try {
                         await tx.sport.create({
                             data: {
@@ -48,10 +50,25 @@ export class WorkoutRepository {
                                 icon: "barbell",
                             },
                         });
+                        console.log(`[WorkoutRepo] Sport auto-provisioned successfully: ${sportId}`);
                     } catch (e: any) {
                         // Ignore unique constraint errors — another process may have created it
                         if (e?.code !== "P2002") throw e;
+                        console.warn(`[WorkoutRepo] Sport P2002 (already exists by name/slug): ${sportId}`);
                     }
+
+                    // Verify the sport now exists with the exact ID we need (FK safety)
+                    const verify = await tx.sport.findUnique({ where: { id: sportId } });
+                    if (!verify) {
+                        console.error(`[WorkoutRepo] Sport FK safety check failed! ID ${sportId} does not exist after auto-provision.`);
+                        throw new Error(
+                            `Sport with ID ${sportId} could not be provisioned. ` +
+                            `A sport with the same name/slug exists under a different ID. ` +
+                            `Please run the seed script: npx prisma db seed`,
+                        );
+                    }
+                } else {
+                    console.log(`[WorkoutRepo] Sport exists: ${sportId} (${exists.name})`);
                 }
             }
 
