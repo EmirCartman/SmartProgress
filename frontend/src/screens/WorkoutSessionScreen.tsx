@@ -126,6 +126,10 @@ export default function WorkoutSessionScreen() {
     const [restored, setRestored] = useState(false);
     const [rpeMode, setRpeMode] = useState<"rpe" | "rir" | "both">("rpe");
 
+    // Use a ref for finishing flag so beforeRemove always has the latest value
+    // (avoids stale closure problem where state is captured at render time)
+    const finishingRef = useRef(false);
+
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const inputRefs = useRef<Record<string, TextInput | null>>({});
@@ -200,26 +204,44 @@ export default function WorkoutSessionScreen() {
             const params = route.params;
             const hasProgramParams = !!(params?.programId || params?.programData);
 
+            // Stale session cleanup: if the saved session is completed or has
+            // a completedAt timestamp, it was already finished — clear it.
+            if (saved && (saved.status === "completed" || saved.completedAt)) {
+                console.log("[WorkoutSession] Clearing stale completed session:", saved.id);
+                await clearActiveSession();
+                // Fall through to load new program data
+            }
             // Session guard: if there IS a saved session AND new program params,
             // warn the user instead of silently overwriting.
-            if (saved && saved.status === "active" && hasProgramParams) {
-                Alert.alert(
-                    "Aktif Antrenman",
-                    "Hali hazırda devam eden bir antrenmanınız var. Lütfen önce onu bitirin veya iptal edin.",
-                    [
-                        {
-                            text: "Mevcut Antrenmana Dön",
-                            onPress: () => {
-                                setSession(saved);
-                                const start = new Date(saved.startedAt).getTime();
-                                setElapsed(Math.floor((Date.now() - start) / 1000));
-                                setRestored(true);
-                            },
-                        },
-                        { text: "Geri Git", style: "cancel", onPress: () => navigation.goBack() },
-                    ],
+            else if (saved && saved.status === "active" && hasProgramParams) {
+                // Check if the saved session has any exercises with data
+                const hasData = saved.exercises.some((ex) =>
+                    ex.sets.some((s) => s.weight > 0 || s.reps > 0)
                 );
-                return;
+
+                if (hasData) {
+                    Alert.alert(
+                        "Aktif Antrenman",
+                        "Hali hazırda devam eden bir antrenmanınız var. Lütfen önce onu bitirin veya iptal edin.",
+                        [
+                            {
+                                text: "Mevcut Antrenmana Dön",
+                                onPress: () => {
+                                    setSession(saved);
+                                    const start = new Date(saved.startedAt).getTime();
+                                    setElapsed(Math.floor((Date.now() - start) / 1000));
+                                    setRestored(true);
+                                },
+                            },
+                            { text: "Geri Git", style: "cancel", onPress: () => navigation.goBack() },
+                        ],
+                    );
+                    return;
+                } else {
+                    // Saved session has no meaningful data — discard it
+                    console.log("[WorkoutSession] Discarding empty saved session:", saved.id);
+                    await clearActiveSession();
+                }
             }
 
             // Eğer programdan gelmiyorsak ve aktif bir oturum varsa, onu devam ettir.
@@ -388,14 +410,18 @@ export default function WorkoutSessionScreen() {
     // ─── Back Navigation — just save silently ─
     useEffect(() => {
         const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
-            if (finishing) return;
+            // Use ref instead of state to avoid stale closure issue:
+            // When finishWorkout() calls navigation.replace(), the beforeRemove
+            // fires but the finishing state may not have updated yet.
+            // The ref always has the latest value.
+            if (finishingRef.current) return;
 
             // Always save the current session before leaving
             saveActiveSession({ ...session, totalDuration: elapsed });
             // Let the navigation proceed — session stays in AsyncStorage
         });
         return unsubscribe;
-    }, [navigation, session, elapsed, finishing]);
+    }, [navigation, session, elapsed]);
 
     // ─── Update Helpers ──────────────────────
 
@@ -504,6 +530,7 @@ export default function WorkoutSessionScreen() {
         }
 
         setFinishing(true);
+        finishingRef.current = true;
 
         try {
             const completedSession: WorkoutSession = {

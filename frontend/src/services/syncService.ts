@@ -271,6 +271,7 @@ export async function getPendingWorkoutCount(): Promise<{ pending: number; faile
     };
 }
 
+
 // ─── Active Session Persistence ──────────────
 
 /**
