@@ -7,6 +7,7 @@ import {
     View,
     Text,
     TouchableOpacity,
+    Pressable,
     StyleSheet,
     ScrollView,
     ActivityIndicator,
@@ -20,7 +21,7 @@ import type { RootStackParamList } from "../navigation/RootNavigator";
 import { spacing, fontSize, fontWeight, borderRadius } from "../constants/theme";
 import { useTheme } from "../hooks/ThemeContext";
 import { parseApiError, programApi, workoutApi } from "../services/api";
-import { confirmDialog, showAlert } from "../utils/confirm";
+import { showAlert } from "../utils/confirm";
 
 type Nav = NativeStackNavigationProp<RootStackParamList, "ProgramDetail">;
 type Route = RouteProp<RootStackParamList, "ProgramDetail">;
@@ -95,20 +96,15 @@ export default function ProgramDetailScreen() {
     };
 
     const handleDelete = async () => {
-        const confirmed = await confirmDialog(
-            "Programı Sil",
-            `"${program?.name}" programını silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`
-        );
-        if (confirmed) {
-            setDeleting(true);
-            try {
-                await programApi.deleteProgram(programId);
-                navigation.goBack();
-            } catch (err: any) {
-                const apiError = parseApiError(err);
-                showAlert("Hata", apiError.message || "Silme islemi basarisiz.");
-                setDeleting(false);
-            }
+        if (deleting) return;
+        setDeleting(true);
+        try {
+            await programApi.deleteProgram(programId);
+            navigation.goBack();
+        } catch (err: any) {
+            const apiError = parseApiError(err);
+            showAlert("Hata", apiError.message || "Silme islemi basarisiz.");
+            setDeleting(false);
         }
     };
 
@@ -197,7 +193,7 @@ export default function ProgramDetailScreen() {
                         <Ionicons name="create-outline" size={20} color={colors.accent} />
                     </TouchableOpacity>
 
-                    <TouchableOpacity
+                    <Pressable
                         onPress={handleDelete}
                         disabled={deleting}
                         hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
@@ -208,7 +204,7 @@ export default function ProgramDetailScreen() {
                             size={20}
                             color={deleting ? colors.textMuted : colors.error}
                         />
-                    </TouchableOpacity>
+                    </Pressable>
 
                     <TouchableOpacity
                         onPress={handleStartWorkout}

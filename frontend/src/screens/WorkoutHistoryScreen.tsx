@@ -1,14 +1,10 @@
-// ─────────────────────────────────────────────
-// WorkoutHistoryScreen — Full Workout Log
-// Star/favorite, clear history
-// ─────────────────────────────────────────────
 import React, { useState, useCallback } from "react";
 import {
     View,
     Text,
     StyleSheet,
-    TouchableOpacity,
-    FlatList,
+    Pressable,
+    ScrollView,
     ActivityIndicator,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
@@ -17,8 +13,13 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { spacing, fontSize, fontWeight, borderRadius } from "../constants/theme";
 import { useTheme } from "../hooks/ThemeContext";
 import { parseApiError, workoutApi } from "../services/api";
-import { syncPendingWorkouts, getPendingWorkoutCount, resetFailedWorkouts, clearAllPendingWorkouts } from "../services/syncService";
-import { confirmDialog, showAlert } from "../utils/confirm";
+import {
+    clearAllPendingWorkouts,
+    getPendingWorkoutCount,
+    resetFailedWorkouts,
+    syncPendingWorkouts,
+} from "../services/syncService";
+import { showAlert } from "../utils/confirm";
 import GymCard from "../components/GymCard";
 
 const FAVORITES_KEY = "workout_favorites";
@@ -34,43 +35,36 @@ interface WorkoutItem {
 export default function WorkoutHistoryScreen() {
     const navigation = useNavigation();
     const { colors } = useTheme();
+    const styles = React.useMemo(() => createStyles(colors), [colors]);
+
     const [workouts, setWorkouts] = useState<WorkoutItem[]>([]);
     const [favorites, setFavorites] = useState<Set<string>>(new Set());
     const [loading, setLoading] = useState(true);
     const [syncing, setSyncing] = useState(false);
-    const [pendingInfo, setPendingInfo] = useState<{ pending: number; failed: number; permanent: number }>({ pending: 0, failed: 0, permanent: 0 });
+    const [pendingInfo, setPendingInfo] = useState({ pending: 0, failed: 0, permanent: 0 });
 
-    const styles = React.useMemo(() => createStyles(colors), [colors]);
+    const sortNewestFirst = (items: WorkoutItem[]) =>
+        [...items].sort((a, b) => new Date(b.logDate).getTime() - new Date(a.logDate).getTime());
 
     const loadPendingInfo = async () => {
-        const info = await getPendingWorkoutCount();
-        setPendingInfo(info);
+        setPendingInfo(await getPendingWorkoutCount());
     };
 
     const loadData = async () => {
         try {
-            // Sync any pending workouts first
             try {
                 await syncPendingWorkouts();
             } catch (syncErr) {
-                console.warn("[WorkoutHistory] Pending sync hatası:", syncErr);
+                console.warn("[WorkoutHistory] Pending sync failed:", syncErr);
             }
 
-            const res = await workoutApi.list({ limit: 100 });
-            const fetched: WorkoutItem[] = res.data.workouts || [];
+            const [res, favsStr] = await Promise.all([
+                workoutApi.list({ limit: 100 }),
+                AsyncStorage.getItem(FAVORITES_KEY),
+            ]);
 
-            // Always sort newest first (most recent workout at top)
-            const ordered = [...fetched].sort((a, b) =>
-                new Date(b.logDate).getTime() - new Date(a.logDate).getTime()
-            );
-
-            setWorkouts(ordered);
-
-            // Restore favorites
-            const favsStr = await AsyncStorage.getItem(FAVORITES_KEY);
-            if (favsStr) setFavorites(new Set(JSON.parse(favsStr)));
-
-            // Load pending info after sync attempt
+            setWorkouts(sortNewestFirst(res.data.workouts || []));
+            setFavorites(favsStr ? new Set(JSON.parse(favsStr)) : new Set());
             await loadPendingInfo();
         } catch (err) {
             console.error("[WorkoutHistory] Load error:", err);
@@ -79,89 +73,77 @@ export default function WorkoutHistoryScreen() {
         }
     };
 
+    useFocusEffect(
+        useCallback(() => {
+            loadData();
+        }, []),
+    );
+
     const handleRetrySync = async () => {
         setSyncing(true);
         try {
             await resetFailedWorkouts();
             await syncPendingWorkouts();
+            await loadData();
         } catch (err) {
             console.error("[WorkoutHistory] Retry sync error:", err);
         } finally {
-            const info = await getPendingWorkoutCount();
-            setPendingInfo(info);
-            await loadData();
+            await loadPendingInfo();
             setSyncing(false);
         }
     };
 
     const handleClearPending = async () => {
-        const confirmed = await confirmDialog(
-            "Bekleyen Antrenmanları Temizle",
-            "Sunucuya gönderilememiş tüm antrenman verileri silinecek. Bu işlem geri alınamaz."
-        );
-        if (confirmed) {
-            await clearAllPendingWorkouts();
-            const info = await getPendingWorkoutCount();
-            setPendingInfo(info);
-        }
+        await clearAllPendingWorkouts();
+        await loadPendingInfo();
     };
 
-    useFocusEffect(useCallback(() => { loadData(); }, []));
-
     const toggleFavorite = async (id: string) => {
-        const newFavs = new Set(favorites);
-        if (newFavs.has(id)) newFavs.delete(id);
-        else newFavs.add(id);
-        setFavorites(newFavs);
-        await AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify([...newFavs]));
+        const next = new Set(favorites);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setFavorites(next);
+        await AsyncStorage.setItem(FAVORITES_KEY, JSON.stringify([...next]));
     };
 
     const handleDelete = async (id: string) => {
-        const confirmed = await confirmDialog(
-            "Antrenmanı Sil",
-            "Bu antrenmanı silmek istediğinize emin misiniz?"
-        );
-        if (confirmed) {
-            try {
-                await workoutApi.delete(id);
-                setWorkouts((prev) => prev.filter((w) => w.id !== id));
-                await loadData();
-            } catch (err: any) {
-                const apiError = parseApiError(err);
-                showAlert("Hata", apiError.message || "Silme islemi basarisiz.");
-            }
+        const previous = workouts;
+        setWorkouts((current) => current.filter((w) => w.id !== id));
+
+        try {
+            await workoutApi.delete(id);
+            await loadData();
+        } catch (err) {
+            setWorkouts(previous);
+            const apiError = parseApiError(err);
+            showAlert("Hata", apiError.message || "Silme islemi basarisiz.");
         }
     };
 
     const handleClearOrder = async () => {
-        const confirmed = await confirmDialog(
-            "Sıralamayı Sıfırla",
-            "Liste sıralaması sıfırlanacak. Antrenman kayıtları silinmeyecek."
-        );
-        if (confirmed) {
-            await AsyncStorage.removeItem(ORDER_KEY);
-            await loadData();
-        }
+        await AsyncStorage.removeItem(ORDER_KEY);
+        setWorkouts((current) => sortNewestFirst(current));
     };
 
-    const renderItem = ({ item }: { item: WorkoutItem }) => {
+    const renderWorkout = (item: WorkoutItem) => {
         const isFav = favorites.has(item.id);
         const exerciseCount = item.data?.exercises?.length || 0;
         const duration = item.data?.totalDuration || item.data?.duration || 0;
         const durationMin = Math.floor(duration / 60);
 
         return (
-            <GymCard style={styles.card}>
+            <GymCard key={item.id} style={styles.card}>
                 <View style={styles.cardRow}>
-                    <TouchableOpacity
+                    <Pressable
                         style={styles.cardContent}
                         onPress={() => (navigation as any).navigate("WorkoutDetail", { workout: item })}
-                        activeOpacity={0.7}
                     >
                         <Text style={styles.title} numberOfLines={1}>{item.title}</Text>
                         <Text style={styles.dateText}>
                             {new Date(item.logDate).toLocaleDateString("tr-TR", {
-                                day: "numeric", month: "short", year: "numeric"
+                                day: "numeric",
+                                month: "short",
+                                year: "numeric",
                             })}
                         </Text>
                         <View style={styles.metaRow}>
@@ -176,58 +158,59 @@ export default function WorkoutHistoryScreen() {
                                 </View>
                             )}
                         </View>
-                    </TouchableOpacity>
+                    </Pressable>
 
                     <View style={styles.actionColumn}>
-                        <TouchableOpacity onPress={() => toggleFavorite(item.id)} style={styles.iconBtn}>
+                        <Pressable onPress={() => toggleFavorite(item.id)} style={styles.iconBtn}>
                             <Ionicons
                                 name={isFav ? "star" : "star-outline"}
-                                size={20}
+                                size={21}
                                 color={isFav ? colors.accent : colors.textMuted}
                             />
-                        </TouchableOpacity>
-                        <TouchableOpacity onPress={() => handleDelete(item.id)} style={styles.iconBtn}>
-                            <Ionicons name="trash-outline" size={20} color={colors.error} />
-                        </TouchableOpacity>
+                        </Pressable>
+                        <Pressable onPress={() => handleDelete(item.id)} style={styles.iconBtn}>
+                            <Ionicons name="trash-outline" size={21} color={colors.error} />
+                        </Pressable>
                     </View>
                 </View>
             </GymCard>
         );
     };
+
     if (loading) {
         return (
-            <View style={[styles.root, { justifyContent: "center", alignItems: "center" }]}>
+            <View style={styles.centered}>
                 <ActivityIndicator size="large" color={colors.accent} />
             </View>
         );
     }
 
+    const pendingTotal = pendingInfo.pending + pendingInfo.failed + pendingInfo.permanent;
+
     return (
         <View style={styles.root}>
-            {/* Header */}
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+                <Pressable onPress={() => navigation.goBack()} style={styles.headerBtn}>
                     <Ionicons name="chevron-back" size={26} color={colors.text} />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Antrenman Geçmişi</Text>
-                <TouchableOpacity onPress={handleClearOrder} style={styles.backBtn}>
+                </Pressable>
+                <Text style={styles.headerTitle}>Antrenman Gecmisi</Text>
+                <Pressable onPress={handleClearOrder} style={styles.headerBtn}>
                     <Ionicons name="refresh-outline" size={22} color={colors.textSecondary} />
-                </TouchableOpacity>
+                </Pressable>
             </View>
 
-            {/* Pending Workouts Banner */}
-            {(pendingInfo.pending + pendingInfo.failed + pendingInfo.permanent) > 0 && (
+            {pendingTotal > 0 && (
                 <View style={[styles.pendingBanner, { backgroundColor: colors.accentMuted, borderColor: colors.accent }]}>
                     <View style={{ flex: 1 }}>
                         <Text style={[styles.pendingTitle, { color: colors.accent }]}>
-                            ⏳ {pendingInfo.pending + pendingInfo.failed + pendingInfo.permanent} bekleyen antrenman
+                            {pendingTotal} bekleyen antrenman
                         </Text>
                         <Text style={[styles.pendingDesc, { color: colors.textSecondary }]}>
-                            Sunucuya henüz gönderilemeyen kayıtlar var.
+                            Sunucuya henuz gonderilemeyen kayitlar var.
                         </Text>
                     </View>
-                    <View style={{ flexDirection: "row", gap: 8 }}>
-                        <TouchableOpacity
+                    <View style={styles.pendingActions}>
+                        <Pressable
                             onPress={handleRetrySync}
                             disabled={syncing}
                             style={[styles.pendingBtn, { backgroundColor: colors.accent }]}
@@ -237,32 +220,31 @@ export default function WorkoutHistoryScreen() {
                             ) : (
                                 <Text style={styles.pendingBtnText}>Tekrar Dene</Text>
                             )}
-                        </TouchableOpacity>
-                        <TouchableOpacity
+                        </Pressable>
+                        <Pressable
                             onPress={handleClearPending}
                             style={[styles.pendingBtn, { backgroundColor: colors.error }]}
                         >
                             <Text style={styles.pendingBtnText}>Temizle</Text>
-                        </TouchableOpacity>
+                        </Pressable>
                     </View>
                 </View>
             )}
 
-            {workouts.length === 0 && (pendingInfo.pending + pendingInfo.failed + pendingInfo.permanent) === 0 ? (
+            {workouts.length === 0 && pendingTotal === 0 ? (
                 <View style={styles.empty}>
                     <Ionicons name="barbell-outline" size={48} color={colors.textMuted} />
-                    <Text style={styles.emptyText}>Henüz antrenman kaydınız yok.</Text>
+                    <Text style={styles.emptyText}>Henuz antrenman kaydiniz yok.</Text>
                 </View>
-            ) : workouts.length > 0 ? (
-                <FlatList
+            ) : (
+                <ScrollView
                     style={styles.listContainer}
-                    data={workouts}
-                    keyExtractor={(item) => item.id}
-                    renderItem={renderItem}
                     contentContainerStyle={styles.list}
-                    showsVerticalScrollIndicator={true}
-                />
-            ) : null}
+                    showsVerticalScrollIndicator
+                >
+                    {workouts.map(renderWorkout)}
+                </ScrollView>
+            )}
         </View>
     );
 }
@@ -270,7 +252,14 @@ export default function WorkoutHistoryScreen() {
 const createStyles = (colors: any) => StyleSheet.create({
     root: {
         flex: 1,
+        minHeight: 0,
         backgroundColor: colors.background,
+    },
+    centered: {
+        flex: 1,
+        backgroundColor: colors.background,
+        alignItems: "center",
+        justifyContent: "center",
     },
     header: {
         flexDirection: "row",
@@ -283,55 +272,43 @@ const createStyles = (colors: any) => StyleSheet.create({
         borderBottomColor: colors.border,
         backgroundColor: colors.surface,
     },
+    headerBtn: {
+        minWidth: 48,
+        minHeight: 44,
+        alignItems: "center",
+        justifyContent: "center",
+    },
     headerTitle: {
         fontSize: fontSize.xl,
         fontWeight: fontWeight.bold,
         color: colors.text,
     },
-    backBtn: {
-        padding: spacing.xs,
-        minWidth: 44,
-        alignItems: "center",
+    listContainer: {
+        flex: 1,
+        minHeight: 0,
     },
     list: {
         padding: spacing.lg,
-        paddingBottom: 100,
-    },
-    listContainer: {
-        flex: 1,
+        paddingBottom: 120,
     },
     card: {
         marginBottom: spacing.md,
     },
-    dragHandle: {
-        paddingRight: spacing.sm,
-        paddingVertical: spacing.md,
-    },
-    cardContent: {
-        flex: 1,
-    },
     cardRow: {
         flexDirection: "row",
         alignItems: "center",
-        justifyContent: "space-between",
         gap: spacing.sm,
+    },
+    cardContent: {
+        flex: 1,
+        minHeight: 72,
+        justifyContent: "center",
     },
     title: {
         fontSize: fontSize.lg,
         fontWeight: fontWeight.bold,
         color: colors.text,
-        flex: 1,
-    },
-    iconBtn: {
-        minWidth: 44,
-        minHeight: 44,
-        justifyContent: "center",
-        alignItems: "center",
-    },
-    actionColumn: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: spacing.xs,
+        marginBottom: spacing.xs,
     },
     dateText: {
         fontSize: fontSize.sm,
@@ -351,6 +328,17 @@ const createStyles = (colors: any) => StyleSheet.create({
     chipText: {
         fontSize: fontSize.xs,
         color: colors.textSecondary,
+    },
+    actionColumn: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.xs,
+    },
+    iconBtn: {
+        width: 48,
+        height: 48,
+        alignItems: "center",
+        justifyContent: "center",
     },
     empty: {
         flex: 1,
@@ -372,6 +360,7 @@ const createStyles = (colors: any) => StyleSheet.create({
         padding: spacing.md,
         borderRadius: borderRadius.md,
         borderWidth: 1,
+        gap: spacing.sm,
     },
     pendingTitle: {
         fontSize: fontSize.sm,
@@ -380,6 +369,10 @@ const createStyles = (colors: any) => StyleSheet.create({
     },
     pendingDesc: {
         fontSize: fontSize.xs,
+    },
+    pendingActions: {
+        flexDirection: "row",
+        gap: spacing.sm,
     },
     pendingBtn: {
         paddingHorizontal: spacing.md,
@@ -395,5 +388,3 @@ const createStyles = (colors: any) => StyleSheet.create({
         fontWeight: fontWeight.bold,
     },
 });
-
-

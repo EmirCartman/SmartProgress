@@ -57,6 +57,11 @@ export default function ProfileScreen() {
     const [loading, setLoading] = useState(true);
 
     const pickProfileImage = async () => {
+        const getPickedImageUri = (asset: ImagePicker.ImagePickerAsset) =>
+            asset.base64
+                ? `data:${asset.mimeType || "image/jpeg"};base64,${asset.base64}`
+                : asset.uri;
+
         const savePickedImage = async (uri: string) => {
             updateUser({ avatarUrl: uri, profileImage: uri });
             try {
@@ -77,9 +82,10 @@ export default function ProfileScreen() {
                 allowsEditing: true,
                 aspect: [1, 1],
                 quality: 0.8,
+                base64: true,
             });
             if (!result.canceled && result.assets[0]) {
-                await savePickedImage(result.assets[0].uri);
+                await savePickedImage(getPickedImageUri(result.assets[0]));
             }
             return;
         }
@@ -101,9 +107,10 @@ export default function ProfileScreen() {
                             allowsEditing: true,
                             aspect: [1, 1],
                             quality: 0.8,
+                            base64: true,
                         });
                         if (!result.canceled && result.assets[0]) {
-                            await savePickedImage(result.assets[0].uri);
+                            await savePickedImage(getPickedImageUri(result.assets[0]));
                         }
                     },
                 },
@@ -120,9 +127,10 @@ export default function ProfileScreen() {
                             allowsEditing: true,
                             aspect: [1, 1],
                             quality: 0.8,
+                            base64: true,
                         });
                         if (!result.canceled && result.assets[0]) {
-                            await savePickedImage(result.assets[0].uri);
+                            await savePickedImage(getPickedImageUri(result.assets[0]));
                         }
                     },
                 },

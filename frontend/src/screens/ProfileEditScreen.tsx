@@ -36,6 +36,11 @@ export default function ProfileEditScreen() {
     const [profileImage, setProfileImage] = useState(user?.avatarUrl || user?.profileImage || "");
     const [saving, setSaving] = useState(false);
 
+    const getPickedImageUri = (asset: ImagePicker.ImagePickerAsset) =>
+        asset.base64
+            ? `data:${asset.mimeType || "image/jpeg"};base64,${asset.base64}`
+            : asset.uri;
+
     const pickImage = async (source: "camera" | "gallery") => {
         if (source === "camera") {
             const { status } = await ImagePicker.requestCameraPermissionsAsync();
@@ -48,9 +53,10 @@ export default function ProfileEditScreen() {
                 allowsEditing: true,
                 aspect: [1, 1],
                 quality: 0.8,
+                base64: true,
             });
             if (!result.canceled && result.assets[0]) {
-                setProfileImage(result.assets[0].uri);
+                setProfileImage(getPickedImageUri(result.assets[0]));
             }
         } else {
             const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -63,9 +69,10 @@ export default function ProfileEditScreen() {
                 allowsEditing: true,
                 aspect: [1, 1],
                 quality: 0.8,
+                base64: true,
             });
             if (!result.canceled && result.assets[0]) {
-                setProfileImage(result.assets[0].uri);
+                setProfileImage(getPickedImageUri(result.assets[0]));
             }
         }
     };
