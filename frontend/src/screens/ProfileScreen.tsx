@@ -28,6 +28,7 @@ import { useTheme } from "../hooks/ThemeContext";
 import GymCard from "../components/GymCard";
 import SectionHeader from "../components/SectionHeader";
 import AccentButton from "../components/AccentButton";
+import { confirmDialog } from "../utils/confirm";
 
 const AVAILABLE_COLORS = [
     "#CCFF00", // Default Lime
@@ -201,6 +202,15 @@ export default function ProfileScreen() {
             loadProfileData();
         }, [])
     );
+
+    const handleLogout = async () => {
+        const confirmed = await confirmDialog(
+            "Çıkış Yap",
+            "Hesabınızdan çıkmak istediğinize emin misiniz?",
+        );
+        if (!confirmed) return;
+        await logout();
+    };
 
     const firstName = user?.firstName || "Sporcu";
     const lastName = user?.lastName || "";
@@ -437,22 +447,7 @@ export default function ProfileScreen() {
             <AccentButton
                 title="Çıkış Yap"
                 variant="outline"
-                onPress={() =>
-                    Alert.alert(
-                        "Çıkış Yap",
-                        "Hesabınızdan çıkmak istediğinize emin misiniz?",
-                        [
-                            { text: "İptal", style: "cancel" },
-                            {
-                                text: "Çıkış Yap",
-                                style: "destructive",
-                                onPress: async () => {
-                                    await logout();
-                                },
-                            },
-                        ]
-                    )
-                }
+                onPress={handleLogout}
                 style={styles.logoutBtn}
             />
 
