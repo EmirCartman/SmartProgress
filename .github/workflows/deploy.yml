@@ -82,13 +82,13 @@ jobs:
           docker compose build backend frontend
 
           echo "==> Starting containers"
-          docker compose up -d redis backend frontend
+          docker compose up -d redis backend frontend caddy
 
           echo "==> Running database migrations"
           docker compose exec -T backend npx prisma migrate deploy
 
           echo "==> Restarting app containers"
-          docker compose restart backend frontend
+          docker compose restart backend frontend caddy
 
           echo "==> Health check"
           for attempt in $(seq 1 20); do

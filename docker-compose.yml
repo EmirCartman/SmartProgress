@@ -1,7 +1,6 @@
 version: "3.9"
 
 services:
-  # Redis'i tutuyoruz çünkü RDS sadece SQL veritabanıdır.
   redis:
     image: redis:7-alpine
     container_name: smartprogress-redis
@@ -18,8 +17,10 @@ services:
       - "3000:3000"
     environment:
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL} # GitHub Secrets'tan gelecek
+      DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
+      PORT: 3000
     depends_on:
       - redis
     networks:
@@ -29,19 +30,38 @@ services:
     build: ./frontend
     container_name: smartprogress-frontend
     restart: unless-stopped
-    ports:
-      - "80:8081"
     environment:
-      # ÖNEMLİ: 0.0.0.0 hatasını bu değişkenler ve host ayarı çözer
       EXPO_DEV_CLIENT_NETWORK_OPTION: lan
       NODE_ENV: production
-      EXPO_PUBLIC_API_URL: http://3.79.148.219:3000
-      API_URL: http://3.79.148.219:3000 # Kendi sunucu IP'ni buraya yaz
-    # Dockerfile'daki CMD'yi burada ezerek hata veren parametreyi düzeltiyoruz
+      EXPO_PUBLIC_API_URL: https://api.smartprogress.online
+      API_URL: https://api.smartprogress.online
     command: [ "npx", "expo", "start", "--web", "--host", "lan", "--clear" ]
+    depends_on:
+      - backend
+    networks:
+      - smartprogress-network
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: smartprogress-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
     networks:
       - smartprogress-network
 
 networks:
   smartprogress-network:
     driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

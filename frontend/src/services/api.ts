@@ -8,9 +8,13 @@ import { SyncWorkoutPayload } from "../types/workout";
 
 function getDefaultApiUrl(): string {
     if (typeof window !== "undefined" && window.location?.hostname) {
+        const hostname = window.location.hostname;
+        if (hostname === "smartprogress.online" || hostname === "app.smartprogress.online") {
+            return "https://api.smartprogress.online";
+        }
         return `${window.location.protocol}//${window.location.hostname}:3000`;
     }
-    return "http://3.79.148.219:3000";
+    return "https://api.smartprogress.online";
 }
 
 const RAW_API_URL =

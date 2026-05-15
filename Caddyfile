@@ -1,0 +1,11 @@
+smartprogress.online {
+    redir https://app.smartprogress.online{uri}
+}
+
+app.smartprogress.online {
+    reverse_proxy frontend:8081
+}
+
+api.smartprogress.online {
+    reverse_proxy backend:3000
+}
