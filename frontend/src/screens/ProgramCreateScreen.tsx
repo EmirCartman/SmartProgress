@@ -28,11 +28,17 @@ import {
 } from "../constants/theme";
 import { useTheme } from "../hooks/ThemeContext";
 import PrivacyModal from "../components/PrivacyModal";
-import { confirmDialog } from "../utils/confirm";
+import ActionConfirmModal from "../components/ActionConfirmModal";
 
 // ─── Helpers ─────────────────────────────────
 
 const FREQUENCY_OPTIONS = [2, 3, 4, 5, 6, 7];
+
+type PendingAction =
+    | null
+    | { type: "exit" }
+    | { type: "frequency"; frequency: number; removedCount: number }
+    | { type: "copy-day"; targetIndex: number; targetHasData: boolean };
 
 /** Safely convert any value to a trimmed string (handles number, null, undefined). */
 function safeString(value: unknown): string {
@@ -75,6 +81,14 @@ function makeWorkingSet(): TargetSet {
     return { targetReps: "", isWarmup: false };
 }
 
+function cloneExercise(exercise: TargetExercise): TargetExercise {
+    return {
+        ...exercise,
+        id: Math.random().toString(36).slice(2),
+        targetSets: exercise.targetSets.map((set) => ({ ...set })),
+    };
+}
+
 // ─── Local Types ─────────────────────────────
 
 interface ProgramDay {
@@ -105,6 +119,7 @@ export default function ProgramCreateScreen() {
     const [showRPE, setShowRPE] = useState(false);
     const [showRIR, setShowRIR] = useState(false);
     const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
+    const [pendingAction, setPendingAction] = useState<PendingAction>(null);
 
     // Pre-populate fields in edit mode
     useEffect(() => {
@@ -138,22 +153,11 @@ export default function ProgramCreateScreen() {
     const workoutDayCount = days.filter((d) => !d.isRestDay).length;
     const isFrequencyMismatch = workoutDayCount !== frequency;
 
-    const handleFrequencyChange = async (f: number) => {
+    const applyFrequencyChange = (f: number) => {
         if (f === frequency) return;
 
         const workoutDays = days.filter((day) => !day.isRestDay);
         const restDays = days.filter((day) => day.isRestDay);
-        const removedWorkoutDays = workoutDays.slice(f);
-        const removedHasData = removedWorkoutDays.some((day) => day.exercises.length > 0);
-
-        if (removedHasData) {
-            const confirmed = await confirmDialog(
-                "Frekansı düşürüyorsunuz",
-                `Bu değişiklik ${removedWorkoutDays.length} antrenman gününü kaldıracak. Bu günlerde yazdığınız egzersizler silinir. Devam etmek istiyor musunuz?`,
-            );
-            if (!confirmed) return;
-        }
-
         const nextWorkoutDays =
             f <= workoutDays.length
                 ? workoutDays.slice(0, f)
@@ -169,6 +173,21 @@ export default function ProgramCreateScreen() {
         setFrequency(f);
         setDays([...nextWorkoutDays, restDay]);
         setActiveDayIdx((prev) => Math.min(prev, nextWorkoutDays.length - 1));
+    };
+
+    const handleFrequencyChange = (f: number) => {
+        if (f === frequency) return;
+
+        const workoutDays = days.filter((day) => !day.isRestDay);
+        const removedWorkoutDays = workoutDays.slice(f);
+        const removedHasData = removedWorkoutDays.some((day) => day.exercises.length > 0);
+
+        if (removedHasData) {
+            setPendingAction({ type: "frequency", frequency: f, removedCount: removedWorkoutDays.length });
+            return;
+        }
+
+        applyFrequencyChange(f);
     };
 
     // ─── Day Management ───────────────────────
@@ -324,6 +343,108 @@ export default function ProgramCreateScreen() {
 
     // ─── Validation & Save ────────────────────
 
+    const copyActiveDayToTarget = (targetIndex: number) => {
+        const sourceDay = days[activeDayIdx];
+        if (!sourceDay || sourceDay.isRestDay || targetIndex === activeDayIdx) return;
+
+        setDays((prev) =>
+            prev.map((day, index) =>
+                index === targetIndex
+                    ? {
+                        ...day,
+                        isRestDay: false,
+                        exercises: sourceDay.exercises.map(cloneExercise),
+                    }
+                    : day,
+            ),
+        );
+        setActiveDayIdx(targetIndex);
+    };
+
+    const handleCopyDay = (targetIndex: number) => {
+        const targetDay = days[targetIndex];
+        if (!targetDay || targetIndex === activeDayIdx) return;
+
+        const targetHasData = targetDay.exercises.length > 0 || !!targetDay.isRestDay;
+        if (targetHasData) {
+            setPendingAction({ type: "copy-day", targetIndex, targetHasData });
+            return;
+        }
+
+        copyActiveDayToTarget(targetIndex);
+    };
+
+    const hasUnsavedChanges = React.useMemo(() => {
+        return (
+            safeString(name) !== "" ||
+            safeString(description) !== "" ||
+            days.some((day) => day.exercises.length > 0)
+        );
+    }, [days, description, name]);
+
+    const requestExit = () => {
+        if (hasUnsavedChanges) {
+            setPendingAction({ type: "exit" });
+            return;
+        }
+        navigation.goBack();
+    };
+
+    const confirmPendingAction = () => {
+        const action = pendingAction;
+        setPendingAction(null);
+
+        if (!action) return;
+        if (action.type === "exit") {
+            navigation.goBack();
+            return;
+        }
+        if (action.type === "frequency") {
+            applyFrequencyChange(action.frequency);
+            return;
+        }
+        if (action.type === "copy-day") {
+            copyActiveDayToTarget(action.targetIndex);
+        }
+    };
+
+    const pendingModalCopyTargetLabel =
+        pendingAction?.type === "copy-day"
+            ? days[pendingAction.targetIndex]?.label ?? `Gün ${pendingAction.targetIndex + 1}`
+            : "";
+
+    const pendingModalProps = (() => {
+        if (!pendingAction) return null;
+
+        if (pendingAction.type === "exit") {
+            return {
+                title: "Kaydedilmemiş değişiklikler var",
+                message: "Programı kaydetmeden çıkarsanız yaptığınız değişiklikler kaybolur.",
+                primaryLabel: "Çık",
+                secondaryLabel: "Devam Et",
+                destructivePrimary: true,
+            };
+        }
+
+        if (pendingAction.type === "frequency") {
+            return {
+                title: "Frekansı düşürüyorsunuz",
+                message: `Bu değişiklik ${pendingAction.removedCount} antrenman gününü kaldıracak. Bu günlerde yazdığınız egzersizler silinir.`,
+                primaryLabel: "Devam Et",
+                secondaryLabel: "Vazgeç",
+                destructivePrimary: true,
+            };
+        }
+
+        return {
+            title: "Günün üzerine yazılsın mı?",
+            message: `${pendingModalCopyTargetLabel} içindeki mevcut içerik silinip ${days[activeDayIdx]?.label ?? "aktif gün"} ile değiştirilecek.`,
+            primaryLabel: "Üzerine Yaz",
+            secondaryLabel: "Vazgeç",
+            destructivePrimary: true,
+        };
+    })();
+
     const handleSave = useCallback(() => {
         if (safeString(name) === "") {
             showAlert("Hata", "Lütfen programa bir isim verin.");
@@ -422,7 +543,7 @@ export default function ProgramCreateScreen() {
         >
             {/* ── Header ── */}
             <View style={styles.header}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconBtn}>
+                <TouchableOpacity onPress={requestExit} style={styles.iconBtn}>
                     <Ionicons name="close" size={28} color={colors.text} />
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>{isEditMode ? "Programı Düzenle" : "Yeni Program"}</Text>
@@ -553,6 +674,33 @@ export default function ProgramCreateScreen() {
                         )}
                     </View>
 
+                    {!activeDay.isRestDay && activeDay.exercises.length > 0 && days.length > 1 && (
+                        <View style={styles.copyDayPanel}>
+                            <View style={styles.copyDayHeader}>
+                                <Ionicons name="copy-outline" size={16} color={colors.accent} />
+                                <Text style={styles.copyDayTitle}>Bu günü kopyala</Text>
+                            </View>
+                            <ScrollView
+                                horizontal
+                                showsHorizontalScrollIndicator={false}
+                                contentContainerStyle={styles.copyDayTargets}
+                            >
+                                {days.map((day, idx) => {
+                                    if (idx === activeDayIdx || day.isRestDay) return null;
+                                    return (
+                                        <TouchableOpacity
+                                            key={`copy-${idx}`}
+                                            style={styles.copyDayChip}
+                                            onPress={() => handleCopyDay(idx)}
+                                        >
+                                            <Text style={styles.copyDayChipText}>{day.label}</Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </ScrollView>
+                        </View>
+                    )}
+
                     {/* Frequency deviation warning */}
                     {isFrequencyMismatch && (
                         <View style={styles.warningBanner}>
@@ -628,7 +776,7 @@ export default function ProgramCreateScreen() {
                             {activeDay.exercises.map((exercise, exIndex) => (
                                 <View key={exercise.id} style={styles.exerciseCard}>
                                     <View style={styles.exHeader}>
-                                        <Text style={styles.exNumber}>#{exIndex + 1}</Text>
+                                        <Text style={styles.exNumber} numberOfLines={1}>#{exIndex + 1}</Text>
                                         <TextInput
                                             style={styles.exNameInput}
                                             placeholder="Egzersiz Adı (Örn: Bench Press)"
@@ -762,6 +910,19 @@ export default function ProgramCreateScreen() {
                 onSelectPublic={() => doSave(true)}
                 onCancel={() => setPrivacyModalVisible(false)}
             />
+            {pendingModalProps && (
+                <ActionConfirmModal
+                    visible={!!pendingAction}
+                    title={pendingModalProps.title}
+                    message={pendingModalProps.message}
+                    primaryLabel={pendingModalProps.primaryLabel}
+                    secondaryLabel={pendingModalProps.secondaryLabel}
+                    destructivePrimary={pendingModalProps.destructivePrimary}
+                    onPrimary={confirmPendingAction}
+                    onSecondary={() => setPendingAction(null)}
+                    onDismiss={() => setPendingAction(null)}
+                />
+            )}
         </KeyboardAvoidingView>
     );
 }
@@ -953,6 +1114,41 @@ const createStyles = (colors: any) => StyleSheet.create({
     removeDayBtn: {
         padding: spacing.sm,
     },
+    copyDayPanel: {
+        marginTop: spacing.md,
+        padding: spacing.md,
+        borderRadius: borderRadius.md,
+        backgroundColor: colors.background,
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    copyDayHeader: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.xs,
+        marginBottom: spacing.sm,
+    },
+    copyDayTitle: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        color: colors.textSecondary,
+    },
+    copyDayTargets: {
+        gap: spacing.sm,
+    },
+    copyDayChip: {
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: borderRadius.md,
+        backgroundColor: colors.surfaceElevated,
+        borderWidth: 1,
+        borderColor: colors.borderLight,
+    },
+    copyDayChipText: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+        color: colors.accent,
+    },
     // Exercises
     exerciseCard: {
         backgroundColor: colors.background,
@@ -972,7 +1168,9 @@ const createStyles = (colors: any) => StyleSheet.create({
         fontWeight: fontWeight.bold,
         color: colors.accent,
         marginRight: spacing.sm,
-        minWidth: 28,
+        minWidth: 42,
+        textAlign: "center",
+        lineHeight: 24,
     },
     exNameInput: {
         flex: 1,

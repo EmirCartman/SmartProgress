@@ -562,6 +562,7 @@ export default function WorkoutSessionScreen() {
     }, [updateSession]);
 
     const discardWorkout = useCallback(async () => {
+        finishingRef.current = true;
         if (intervalRef.current) {
             clearInterval(intervalRef.current);
             intervalRef.current = null;
