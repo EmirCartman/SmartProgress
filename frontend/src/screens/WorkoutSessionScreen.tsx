@@ -41,12 +41,14 @@ import {
 import { programApi } from "../services/api";
 import { useAuth } from "../store/AuthContext";
 import AccentButton from "../components/AccentButton";
+import { confirmDialog, showAlert } from "../utils/confirm";
 
 // ─── Constants ───────────────────────────────
 
 // Default Fitness sport ID — replace with dynamic value when sports API ready
 const DEFAULT_SPORT_ID = "00000000-0000-0000-0000-000000000001";
 const AUTOSAVE_DEBOUNCE_MS = 500;
+const ADDED_EXERCISE_HIGHLIGHT_MS = 1400;
 
 // ─── ID Generator ────────────────────────────
 
@@ -127,6 +129,8 @@ export default function WorkoutSessionScreen() {
     const [finishing, setFinishing] = useState(false);
     const [restored, setRestored] = useState(false);
     const [rpeMode, setRpeMode] = useState<"rpe" | "rir" | "both">("rpe");
+    const [recentlyAddedExerciseId, setRecentlyAddedExerciseId] = useState<string | null>(null);
+    const isWeb = Platform.OS === "web";
 
     // Use a ref for finishing flag so beforeRemove always has the latest value
     // (avoids stale closure problem where state is captured at render time)
@@ -135,6 +139,7 @@ export default function WorkoutSessionScreen() {
     const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
     const inputRefs = useRef<Record<string, TextInput | null>>({});
+    const webScrollRef = useRef<ScrollView | null>(null);
 
     const focusNext = useCallback((exIndex: number, setIndex: number, field: "weight" | "reps" | "rpe") => {
         let nextKey = "";
@@ -196,6 +201,45 @@ export default function WorkoutSessionScreen() {
             return next;
         });
     };
+
+    const setFromCache = useCallback((set: WorkoutSet, exerciseId: string): WorkoutSet => {
+        const nextSet = { ...set };
+        const weightRaw = textCache[cacheKey(exerciseId, set.id, "weight")];
+        const repsRaw = textCache[cacheKey(exerciseId, set.id, "reps")];
+        const rpeRaw = textCache[cacheKey(exerciseId, set.id, "rpe")];
+        const rirRaw = textCache[cacheKey(exerciseId, set.id, "rir")];
+
+        if (weightRaw !== undefined) {
+            nextSet.weight = parseFloat(weightRaw) || 0;
+        }
+        if (repsRaw !== undefined) {
+            nextSet.reps = parseInt(repsRaw, 10) || 0;
+        }
+        if (rpeRaw !== undefined) {
+            nextSet.rpe = Math.min(parseFloat(rpeRaw) || 0, 10);
+        }
+        if (rirRaw !== undefined) {
+            (nextSet as any).rir = rirRaw.trim();
+        }
+
+        return nextSet;
+    }, [textCache]);
+
+    const materializeSessionInputs = useCallback((): WorkoutSession => {
+        if (Object.keys(textCache).length === 0) return session;
+
+        const nextSession = {
+            ...session,
+            exercises: session.exercises.map((exercise) => ({
+                ...exercise,
+                sets: exercise.sets.map((set) => setFromCache(set, exercise.id)),
+            })),
+        };
+
+        setSession(nextSession);
+        setTextCache({});
+        return nextSession;
+    }, [session, setFromCache, textCache]);
 
     // ─── Restore Active Session / Load Program ─
     useEffect(() => {
@@ -338,6 +382,16 @@ export default function WorkoutSessionScreen() {
         };
     }, []);
 
+    useEffect(() => {
+        if (!recentlyAddedExerciseId) return;
+
+        const timer = setTimeout(() => {
+            setRecentlyAddedExerciseId(null);
+        }, ADDED_EXERCISE_HIGHLIGHT_MS);
+
+        return () => clearTimeout(timer);
+    }, [recentlyAddedExerciseId]);
+
     // ─── Debounced Auto-Save ─────────────────
     useEffect(() => {
         if (!restored || finishingRef.current) return;
@@ -432,6 +486,10 @@ export default function WorkoutSessionScreen() {
             ...prev,
             exercises: [...prev.exercises, newEx],
         }));
+        setRecentlyAddedExerciseId(newEx.id);
+        requestAnimationFrame(() => {
+            webScrollRef.current?.scrollToEnd({ animated: true });
+        });
     }, [updateSession]);
 
     const removeExercise = useCallback((exerciseId: string) => {
@@ -461,6 +519,37 @@ export default function WorkoutSessionScreen() {
         }));
     }, [updateSession]);
 
+    const moveExercise = useCallback((exerciseId: string, direction: "up" | "down") => {
+        updateSession((prev) => {
+            const fromIndex = prev.exercises.findIndex((exercise) => exercise.id === exerciseId);
+            const toIndex = direction === "up" ? fromIndex - 1 : fromIndex + 1;
+            if (fromIndex < 0 || toIndex < 0 || toIndex >= prev.exercises.length) return prev;
+
+            const exercises = [...prev.exercises];
+            const [moved] = exercises.splice(fromIndex, 1);
+            exercises.splice(toIndex, 0, moved);
+            return { ...prev, exercises };
+        });
+    }, [updateSession]);
+
+    const moveSet = useCallback((exerciseId: string, setId: string, direction: "up" | "down") => {
+        updateSession((prev) => ({
+            ...prev,
+            exercises: prev.exercises.map((exercise) => {
+                if (exercise.id !== exerciseId) return exercise;
+
+                const fromIndex = exercise.sets.findIndex((set) => set.id === setId);
+                const toIndex = direction === "up" ? fromIndex - 1 : fromIndex + 1;
+                if (fromIndex < 0 || toIndex < 0 || toIndex >= exercise.sets.length) return exercise;
+
+                const sets = [...exercise.sets];
+                const [moved] = sets.splice(fromIndex, 1);
+                sets.splice(toIndex, 0, moved);
+                return { ...exercise, sets };
+            }),
+        }));
+    }, [updateSession]);
+
     const updateExerciseName = useCallback((exerciseId: string, name: string) => {
         updateSession((prev) => ({
             ...prev,
@@ -473,12 +562,15 @@ export default function WorkoutSessionScreen() {
     // ─── Finish Workout ──────────────────────
 
     const finishWorkout = async () => {
-        const validExercises = session.exercises.filter(
+        if (finishingRef.current) return;
+
+        const currentSession = materializeSessionInputs();
+        const validExercises = currentSession.exercises.filter(
             (e) => e.name.trim().length > 0 && e.sets.some((s) => s.weight > 0 || s.reps > 0),
         );
 
         if (validExercises.length === 0) {
-            Alert.alert("Eksik Bilgi", "En az bir egzersiz adı ve bir set bilgisi girmelisiniz.");
+            showAlert("Eksik Bilgi", "En az bir egzersiz adı ve bir set bilgisi girmelisiniz.");
             return;
         }
 
@@ -491,7 +583,7 @@ export default function WorkoutSessionScreen() {
 
         try {
             const completedSession: WorkoutSession = {
-                ...session,
+                ...currentSession,
                 exercises: validExercises,
                 completedAt: new Date().toISOString(),
                 totalDuration: elapsed,
@@ -507,21 +599,21 @@ export default function WorkoutSessionScreen() {
             try {
                 const syncResult = await syncPendingWorkouts();
                 if (syncResult.failed > 0) {
-                    Alert.alert(
+                    showAlert(
                         "Senkronizasyon Uyarısı",
                         `Antrenman yerel olarak kaydedildi ancak sunucuya gönderilemedi.\n\n` +
                         `Hata: ${syncResult.errors.join(", ")}\n\n` +
                         `İnternet bağlantınızı kontrol edin. Sonraki giriş sırasında tekrar denenecek.`,
                     );
                 } else if (syncResult.offline) {
-                    Alert.alert(
+                    showAlert(
                         "Çevrimdışı Kayıt",
                         "Antrenman yerel olarak kaydedildi. İnternet bağlantısı sağlandığında otomatik olarak senkronize edilecek.",
                     );
                 }
             } catch (err) {
                 console.warn("[WorkoutSession] Sync hatası (arka planda yeniden denenecek):", err);
-                Alert.alert(
+                showAlert(
                     "Senkronizasyon Hatası",
                     "Antrenman yerel olarak kaydedildi ancak sunucuya gönderilemedi. " +
                     "Sonraki girişinizde tekrar denenecek.",
@@ -567,13 +659,14 @@ export default function WorkoutSessionScreen() {
             });
         } catch (error) {
             console.error("[WorkoutSession] Kaydetme hatası:", error);
-            Alert.alert("Kaydetme Hatası", "Antrenman verisi kaydedilirken bir hata oluştu.");
+            showAlert("Kaydetme Hatası", "Antrenman verisi kaydedilirken bir hata oluştu.");
         } finally {
             setFinishing(false);
+            finishingRef.current = false;
         }
     };
 
-    const cancelWorkout = () => {
+    const cancelWorkout = async () => {
         // Check if any sets have been filled in
         const hasData = session.exercises.some((ex) =>
             ex.sets.some((s) => s.weight > 0 || s.reps > 0)
@@ -606,6 +699,17 @@ export default function WorkoutSessionScreen() {
         }
 
         // Data exists — give user 3 options
+        if (isWeb) {
+            const shouldSaveAndLeave = await confirmDialog(
+                "Antrenman Devam Ediyor",
+                "Verileriniz kayıtlı. Kaydedip çıkmak ister misiniz?",
+            );
+            if (shouldSaveAndLeave) {
+                await doSaveAndLeave();
+            }
+            return;
+        }
+
         Alert.alert(
             "Antrenman Devam Ediyor",
             "Verileriniz kayıtlı. Ne yapmak istersiniz?",
@@ -728,19 +832,45 @@ export default function WorkoutSessionScreen() {
             const setIndex = getSetIndex() ?? 0;
             const isWarmup = !!set.isWarmup;
             const label = getSetLabel(set, exercise.sets);
+            const canMoveSetUp = setIndex > 0;
+            const canMoveSetDown = setIndex < exercise.sets.length - 1;
 
             return (
                 <ScaleDecorator>
                     <View style={[styles.setRow, isWarmup && styles.warmupSetRow]}>
-                        <TouchableOpacity
-                            onLongPress={dragSet}
-                            delayLongPress={180}
-                            style={[styles.setDragHandle, isWarmup && styles.warmupSetDragHandle]}
-                        >
-                            <Text style={[styles.setNumber, isWarmup && styles.warmupSetNumber]}>
-                                {label}
-                            </Text>
-                        </TouchableOpacity>
+                        {isWeb ? (
+                            <View style={[styles.setDragHandle, styles.webSetOrderHandle, isWarmup && styles.warmupSetDragHandle]}>
+                                <Text style={[styles.setNumber, isWarmup && styles.warmupSetNumber]}>
+                                    {label}
+                                </Text>
+                                <View style={styles.webOrderButtons}>
+                                    <TouchableOpacity
+                                        onPress={() => moveSet(exercise.id, set.id, "up")}
+                                        disabled={!canMoveSetUp}
+                                        style={[styles.webOrderBtn, !canMoveSetUp && styles.webOrderBtnDisabled]}
+                                    >
+                                        <Ionicons name="chevron-up" size={12} color={colors.textSecondary} />
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        onPress={() => moveSet(exercise.id, set.id, "down")}
+                                        disabled={!canMoveSetDown}
+                                        style={[styles.webOrderBtn, !canMoveSetDown && styles.webOrderBtnDisabled]}
+                                    >
+                                        <Ionicons name="chevron-down" size={12} color={colors.textSecondary} />
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        ) : (
+                            <TouchableOpacity
+                                onLongPress={dragSet}
+                                delayLongPress={180}
+                                style={[styles.setDragHandle, isWarmup && styles.warmupSetDragHandle]}
+                            >
+                                <Text style={[styles.setNumber, isWarmup && styles.warmupSetNumber]}>
+                                    {label}
+                                </Text>
+                            </TouchableOpacity>
+                        )}
 
                         <View style={[styles.inputWrapper, { flex: 1 }]}>
                             <TextInput
@@ -846,11 +976,34 @@ export default function WorkoutSessionScreen() {
 
         return (
             <ScaleDecorator>
-                <View style={[styles.exerciseCard, isActive && styles.activeExerciseCard]}>
+                <View style={[
+                    styles.exerciseCard,
+                    isActive && styles.activeExerciseCard,
+                    recentlyAddedExerciseId === exercise.id && styles.recentlyAddedExerciseCard,
+                ]}>
                     <View style={styles.exerciseHeader}>
-                        <TouchableOpacity onLongPress={drag} delayLongPress={200} style={styles.dragHandle}>
-                            <Ionicons name="reorder-two" size={24} color={colors.textSecondary} />
-                        </TouchableOpacity>
+                        {isWeb ? (
+                            <View style={[styles.dragHandle, styles.webExerciseOrderHandle]}>
+                                <TouchableOpacity
+                                    onPress={() => moveExercise(exercise.id, "up")}
+                                    disabled={exIndex === 0}
+                                    style={[styles.webOrderBtn, exIndex === 0 && styles.webOrderBtnDisabled]}
+                                >
+                                    <Ionicons name="chevron-up" size={14} color={colors.textSecondary} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    onPress={() => moveExercise(exercise.id, "down")}
+                                    disabled={exIndex === session.exercises.length - 1}
+                                    style={[styles.webOrderBtn, exIndex === session.exercises.length - 1 && styles.webOrderBtnDisabled]}
+                                >
+                                    <Ionicons name="chevron-down" size={14} color={colors.textSecondary} />
+                                </TouchableOpacity>
+                            </View>
+                        ) : (
+                            <TouchableOpacity onLongPress={drag} delayLongPress={200} style={styles.dragHandle}>
+                                <Ionicons name="reorder-two" size={24} color={colors.textSecondary} />
+                            </TouchableOpacity>
+                        )}
 
                         <View style={styles.exerciseIndexBadge}>
                             <Text style={styles.exerciseIndexText}>{exIndex + 1}</Text>
@@ -1019,14 +1172,29 @@ export default function WorkoutSessionScreen() {
                         });
                     })()}
 
-                    <DraggableFlatList
-                        data={exercise.sets}
-                        keyExtractor={(set) => set.id}
-                        renderItem={renderSetItem}
-                        onDragEnd={({ data }) => reorderSets(exercise.id, data)}
-                        scrollEnabled={false}
-                        activationDistance={8}
-                    />
+                    {isWeb ? (
+                        <View>
+                            {exercise.sets.map((set, index) => (
+                                <React.Fragment key={set.id}>
+                                    {renderSetItem({
+                                        item: set,
+                                        getIndex: () => index,
+                                        drag: () => undefined,
+                                        isActive: false,
+                                    } as RenderItemParams<WorkoutSet>)}
+                                </React.Fragment>
+                            ))}
+                        </View>
+                    ) : (
+                        <DraggableFlatList
+                            data={exercise.sets}
+                            keyExtractor={(set) => set.id}
+                            renderItem={renderSetItem}
+                            onDragEnd={({ data }) => reorderSets(exercise.id, data)}
+                            scrollEnabled={false}
+                            activationDistance={8}
+                        />
+                    )}
 
                     <View style={styles.addSetRow}>
                         <TouchableOpacity
@@ -1057,18 +1225,41 @@ export default function WorkoutSessionScreen() {
             style={styles.container}
             behavior={Platform.OS === "ios" ? "padding" : undefined}
         >
-            <DraggableFlatList
-                data={session.exercises}
-                onDragEnd={({ data }: { data: WorkoutExercise[] }) => updateSession(prev => ({ ...prev, exercises: data }))}
-                keyExtractor={(item: WorkoutExercise) => item.id}
-                renderItem={renderExerciseItem}
-                ListHeaderComponent={renderHeader}
-                ListFooterComponent={renderFooter}
-                contentContainerStyle={styles.content}
-                showsVerticalScrollIndicator={false}
-                keyboardShouldPersistTaps="handled"
-                containerStyle={styles.scrollView}
-            />
+            {isWeb ? (
+                <ScrollView
+                    ref={webScrollRef}
+                    style={styles.scrollView}
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="always"
+                >
+                    {renderHeader()}
+                    {session.exercises.map((exercise, index) => (
+                        <React.Fragment key={exercise.id}>
+                            {renderExerciseItem({
+                                item: exercise,
+                                getIndex: () => index,
+                                drag: () => undefined,
+                                isActive: false,
+                            } as RenderItemParams<WorkoutExercise>)}
+                        </React.Fragment>
+                    ))}
+                    {renderFooter()}
+                </ScrollView>
+            ) : (
+                <DraggableFlatList
+                    data={session.exercises}
+                    onDragEnd={({ data }: { data: WorkoutExercise[] }) => updateSession(prev => ({ ...prev, exercises: data }))}
+                    keyExtractor={(item: WorkoutExercise) => item.id}
+                    renderItem={renderExerciseItem}
+                    ListHeaderComponent={renderHeader}
+                    ListFooterComponent={renderFooter}
+                    contentContainerStyle={styles.content}
+                    showsVerticalScrollIndicator={false}
+                    keyboardShouldPersistTaps="always"
+                    containerStyle={styles.scrollView}
+                />
+            )}
         </KeyboardAvoidingView>
     );
 }
@@ -1272,6 +1463,35 @@ const createStyles = (colors: any) => StyleSheet.create({
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
         shadowRadius: 8,
+    },
+    recentlyAddedExerciseCard: {
+        borderColor: colors.accent,
+        backgroundColor: colors.accentMuted,
+    },
+    webExerciseOrderHandle: {
+        gap: 2,
+        paddingRight: spacing.sm,
+        alignItems: "center",
+    },
+    webSetOrderHandle: {
+        flexDirection: "row",
+        gap: 4,
+    },
+    webOrderButtons: {
+        gap: 2,
+    },
+    webOrderBtn: {
+        width: 22,
+        height: 18,
+        borderRadius: borderRadius.sm,
+        backgroundColor: colors.surfaceLight,
+        alignItems: "center",
+        justifyContent: "center",
+        borderWidth: 1,
+        borderColor: colors.border,
+    },
+    webOrderBtnDisabled: {
+        opacity: 0.35,
     },
     listHeader: {
         marginBottom: spacing.md,
