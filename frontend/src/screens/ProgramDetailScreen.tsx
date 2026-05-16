@@ -72,6 +72,7 @@ export default function ProgramDetailScreen() {
     const [refreshing, setRefreshing] = useState(false);
     const [deleting, setDeleting] = useState(false);
     const [confirmDeleteVisible, setConfirmDeleteVisible] = useState(false);
+    const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null);
     const [socialBusy, setSocialBusy] = useState(false);
     const [workoutCount, setWorkoutCount] = useState(0);
 
@@ -167,6 +168,26 @@ export default function ProgramDetailScreen() {
         });
     };
 
+    const handleStartSelectedDay = async (dayIndex: number) => {
+        if (!program?.data?.days) return;
+        setSelectedDayIndex(null);
+
+        if (program.isPublic && program.isMine === false) {
+            const copied = await copyProgramToLibrary();
+            if (!copied?.data?.days) return;
+            navigation.replace("ProgramDetail", { programId: copied.id });
+            navigation.navigate("WorkoutSession", {
+                programId: copied.id,
+                programName: copied.name,
+                dayIndex,
+                programData: copied.data as any,
+            });
+            return;
+        }
+
+        navigateToSession(dayIndex);
+    };
+
     const handleEdit = () => {
         if (!program) return;
         navigation.navigate("ProgramCreate", {
@@ -177,11 +198,7 @@ export default function ProgramDetailScreen() {
 
     const handleDayTap = (dayIndex: number) => {
         if (!program) return;
-        if (program.isMine === false) return;
-        navigation.navigate("ProgramCreate", {
-            editProgramId: program.id,
-            editProgramData: program,
-        });
+        setSelectedDayIndex(dayIndex);
     };
 
     const toggleStar = async () => {
@@ -236,6 +253,7 @@ export default function ProgramDetailScreen() {
         program.user?.lastName,
         ownerName || "SP",
     );
+    const selectedDay = selectedDayIndex !== null ? days[selectedDayIndex] : null;
 
     return (
         <View style={s.container}>
@@ -486,6 +504,22 @@ export default function ProgramDetailScreen() {
                 }}
                 onSecondary={() => setConfirmDeleteVisible(false)}
                 onDismiss={() => setConfirmDeleteVisible(false)}
+            />
+            <ActionConfirmModal
+                visible={selectedDayIndex !== null}
+                title={selectedDay?.label || "Program günü"}
+                message={
+                    selectedDay?.isRestDay
+                        ? "Bu gün dinlenme günü olarak tanımlı. Yine de bu günü başlatmak ister misiniz?"
+                        : "Bu program gününü sıradaki günü beklemeden başlatabilirsiniz."
+                }
+                primaryLabel="Günü Başlat"
+                secondaryLabel="Vazgeç"
+                onPrimary={() => {
+                    if (selectedDayIndex !== null) handleStartSelectedDay(selectedDayIndex);
+                }}
+                onSecondary={() => setSelectedDayIndex(null)}
+                onDismiss={() => setSelectedDayIndex(null)}
             />
         </View>
     );
