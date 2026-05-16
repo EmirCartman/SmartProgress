@@ -52,7 +52,7 @@ export default function TabNavigator() {
             <Tab.Screen
                 name="MyProgress"
                 component={MyProgressScreen}
-                options={{ tabBarLabel: "Gelişimim" }}
+                options={{ tabBarLabel: "MyProgress" }}
             />
             <Tab.Screen
                 name="Profile"

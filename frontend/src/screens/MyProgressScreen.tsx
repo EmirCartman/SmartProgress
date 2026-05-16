@@ -111,7 +111,7 @@ export default function MyProgressScreen() {
                 showsVerticalScrollIndicator={false}
             >
                 {/* Page Title */}
-                <Text style={styles.pageTitle}>Gelişimim</Text>
+                <Text style={styles.pageTitle}>MyProgress</Text>
                 <Text style={styles.pageSubtitle}>Performans analitiğin ve akıllı öneriler</Text>
 
                 {/* ─── Time Filter Row ─── */}
