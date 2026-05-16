@@ -17,7 +17,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { spacing, fontSize, fontWeight, borderRadius } from "../constants/theme";
 import { useTheme } from "../hooks/ThemeContext";
 import { useFocusEffect } from "@react-navigation/native";
-import { workoutApi } from "../services/api";
+import { bodyMeasurementApi, nutritionApi, workoutApi } from "../services/api";
 import { useAuth } from "../store/AuthContext";
 import GymCard from "../components/GymCard";
 import SectionHeader from "../components/SectionHeader";
@@ -28,6 +28,39 @@ const SCREEN_WIDTH = Dimensions.get("window").width;
 type TimeFilter = "1H" | "1A" | "1Y" | "Tümü";
 const FILTERS: TimeFilter[] = ["1H", "1A", "1Y", "Tümü"];
 const FILTER_DAYS: Record<TimeFilter, number> = { "1H": 7, "1A": 30, "1Y": 365, "Tümü": 9999 };
+type ChartMetric = "progress:all" | `exercise:${string}` | "body:weight" | "nutrition:calories" | "nutrition:protein" | "nutrition:carbs" | "nutrition:fat";
+
+function toNumber(value: unknown): number {
+    if (value === null || value === undefined || value === "") return 0;
+    const parsed = Number(String(value).replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function bestSetForExercise(workout: any, exerciseName: string) {
+    const target = exerciseName.trim().toLowerCase();
+    const exercise = workout?.data?.exercises?.find((ex: any) => String(ex.name || "").trim().toLowerCase() === target);
+    if (!exercise) return null;
+    return [...(exercise.sets || [])]
+        .filter((set: any) => !set.isWarmup)
+        .map((set: any) => ({ weight: toNumber(set.weight), reps: Math.floor(toNumber(set.reps)) }))
+        .filter((set) => set.weight > 0 || set.reps > 0)
+        .sort((a, b) => b.weight - a.weight || b.reps - a.reps)[0] || null;
+}
+
+function buildExerciseProgressTrend(workouts: any[], exerciseName: string) {
+    let best: { weight: number; reps: number } | null = null;
+    return [...workouts]
+        .sort((a, b) => new Date(a.logDate || 0).getTime() - new Date(b.logDate || 0).getTime())
+        .map((workout) => {
+            const next = bestSetForExercise(workout, exerciseName);
+            if (!next) return null;
+            const comparable = !!best;
+            const improved = !!best && (next.weight > best.weight || (next.weight === best.weight && next.reps > best.reps));
+            if (!best || improved) best = next;
+            return { date: workout.logDate, comparable, improved };
+        })
+        .filter(Boolean) as { date?: string; comparable: boolean; improved: boolean }[];
+}
 
 export default function MyProgressScreen() {
     const { user } = useAuth();
@@ -35,8 +68,11 @@ export default function MyProgressScreen() {
     const isAutoSuggestEnabled = user?.settings?.is_auto_suggest_enabled !== false;
 
     const [filter, setFilter] = React.useState<TimeFilter>("1A");
+    const [chartMetric, setChartMetric] = React.useState<ChartMetric>("progress:all");
     const [allWorkouts, setAllWorkouts] = React.useState<any[]>([]);
-    const [progressData, setProgressData] = React.useState<{
+    const [bodyMeasurements, setBodyMeasurements] = React.useState<any[]>([]);
+    const [nutritionLogs, setNutritionLogs] = React.useState<any[]>([]);
+    const [chartData, setChartData] = React.useState<{
         labels: string[];
         datasets: { data: number[] }[];
     }>({ labels: ["0"], datasets: [{ data: [0] }] });
@@ -49,37 +85,107 @@ export default function MyProgressScreen() {
 
     // ─── Progress calculation ─────────────────
 
-    const buildProgressData = (workouts: any[], activeFilter: TimeFilter) => {
+    const metricOptions = React.useMemo(() => {
+        const exercises = Array.from(new Set(getPersonalRecords(allWorkouts).map((pr) => pr.exercise))).slice(0, 12);
+        return [
+            { key: "progress:all" as ChartMetric, label: "Genel Progress" },
+            ...exercises.map((exercise) => ({ key: `exercise:${exercise}` as ChartMetric, label: exercise })),
+            { key: "body:weight" as ChartMetric, label: "Vücut Ağırlığı" },
+            { key: "nutrition:calories" as ChartMetric, label: "Kalori" },
+            { key: "nutrition:protein" as ChartMetric, label: "Protein" },
+            { key: "nutrition:carbs" as ChartMetric, label: "Karbonhidrat" },
+            { key: "nutrition:fat" as ChartMetric, label: "Yağ" },
+        ];
+    }, [allWorkouts]);
+
+    const buildChartData = (
+        workouts: any[],
+        measurements: any[],
+        nutrition: any[],
+        activeFilter: TimeFilter,
+        metric: ChartMetric,
+    ) => {
         const cutoff = new Date();
         cutoff.setDate(cutoff.getDate() - FILTER_DAYS[activeFilter]);
         cutoff.setHours(0, 0, 0, 0);
-        const points = buildProgressTrend(workouts).filter((point) => new Date(point.date || 0) >= cutoff);
-
-        const progressPoints: number[] = [];
         const labels: string[] = [];
+        let dataPoints: number[] = [];
 
-        points.forEach((point, idx: number) => {
-            if (point.comparable > 0) {
-                progressPoints.push(point.percentage);
-                labels.push(`A${idx + 1}`);
-            }
-        });
-
-        if (progressPoints.length === 0) {
-            setProgressData({ labels: ["-"], datasets: [{ data: [0] }] });
+        if (metric === "progress:all") {
+            buildProgressTrend(workouts)
+                .filter((point) => new Date(point.date || 0) >= cutoff && point.comparable > 0)
+                .forEach((point, idx) => {
+                    dataPoints.push(point.percentage);
+                    labels.push(`A${idx + 1}`);
+                });
+        } else if (metric.startsWith("exercise:")) {
+            const exerciseName = metric.replace("exercise:", "");
+            buildExerciseProgressTrend(workouts, exerciseName)
+                .filter((point) => new Date(point.date || 0) >= cutoff && point.comparable)
+                .forEach((point, idx) => {
+                    dataPoints.push(point.improved ? 100 : 0);
+                    labels.push(`A${idx + 1}`);
+                });
+        } else if (metric === "body:weight") {
+            [...measurements]
+                .reverse()
+                .filter((record) => new Date(record.date || 0) >= cutoff && Number(record.weight) > 0)
+                .slice(-12)
+                .forEach((record, idx) => {
+                    dataPoints.push(Number(record.weight));
+                    labels.push(`${idx + 1}`);
+                });
         } else {
-            setProgressData({ labels, datasets: [{ data: progressPoints }] });
+            const field = metric.replace("nutrition:", "");
+            [...nutrition]
+                .reverse()
+                .filter((record) => new Date(record.date || 0) >= cutoff && Number(record[field]) > 0)
+                .slice(-12)
+                .forEach((record, idx) => {
+                    dataPoints.push(Number(record[field]));
+                    labels.push(`${idx + 1}`);
+                });
         }
+
+        if (dataPoints.length === 0) {
+            dataPoints = [0];
+            labels.push("-");
+        }
+        setChartData({ labels, datasets: [{ data: dataPoints }] });
     };
+
+    const chartTitle = React.useMemo(() => {
+        const selected = metricOptions.find((option) => option.key === chartMetric);
+        return selected?.label || "Progress";
+    }, [chartMetric, metricOptions]);
+
+    const chartSuffix = chartMetric === "progress:all" || chartMetric.startsWith("exercise:")
+        ? "%"
+        : chartMetric === "body:weight"
+            ? " kg"
+            : chartMetric === "nutrition:calories"
+                ? " kcal"
+                : " g";
+
+    const chartDecimalPlaces = chartMetric === "body:weight" || chartSuffix === " g" ? 1 : 0;
 
     // ─── Load analytics ───────────────────────
 
     const loadAnalytics = async () => {
         try {
-            const res = await workoutApi.list({ limit: 200 });
-            const workouts = res.data.workouts || [];
+            const [workoutRes, measurementRes, nutritionRes] = await Promise.all([
+                workoutApi.list({ limit: 200 }),
+                bodyMeasurementApi.list({ limit: 180 }),
+                nutritionApi.list({ limit: 180 }),
+            ]);
+            const workouts = workoutRes.data.workouts || [];
+            const measurements = measurementRes.data.measurements || [];
+            const nutrition = nutritionRes.data.logs || [];
+
             setAllWorkouts(workouts);
-            buildProgressData(workouts, filter);
+            setBodyMeasurements(measurements);
+            setNutritionLogs(nutrition);
+            buildChartData(workouts, measurements, nutrition, filter, chartMetric);
 
             setPrs(getPersonalRecords(workouts));
         } catch (err) {
@@ -91,9 +197,11 @@ export default function MyProgressScreen() {
 
     // Re-filter when filter changes
     React.useEffect(() => {
-        if (allWorkouts.length > 0) buildProgressData(allWorkouts, filter);
+        if (allWorkouts.length > 0 || bodyMeasurements.length > 0 || nutritionLogs.length > 0) {
+            buildChartData(allWorkouts, bodyMeasurements, nutritionLogs, filter, chartMetric);
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [filter]);
+    }, [filter, chartMetric]);
 
     useFocusEffect(
         React.useCallback(() => {
@@ -114,6 +222,24 @@ export default function MyProgressScreen() {
                 <Text style={styles.pageTitle}>MyProgress</Text>
                 <Text style={styles.pageSubtitle}>Performans analitiğin ve akıllı öneriler</Text>
 
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.metricFilterRow}
+                >
+                    {metricOptions.map((option) => (
+                        <TouchableOpacity
+                            key={option.key}
+                            style={[styles.metricFilterBtn, chartMetric === option.key && styles.metricFilterBtnActive]}
+                            onPress={() => setChartMetric(option.key)}
+                        >
+                            <Text style={[styles.metricFilterText, chartMetric === option.key && styles.metricFilterTextActive]}>
+                                {option.label}
+                            </Text>
+                        </TouchableOpacity>
+                    ))}
+                </ScrollView>
+
                 {/* ─── Time Filter Row ─── */}
                 <View style={styles.filterRow}>
                     {FILTERS.map((f) => (
@@ -130,18 +256,18 @@ export default function MyProgressScreen() {
                 </View>
 
                 {/* ─── Progress Chart ─── */}
-                <SectionHeader title="📊 Progress Yüzdesi" />
+                <SectionHeader title={`📊 ${chartTitle}`} />
                 <GymCard elevated style={styles.chartCard}>
                     <LineChart
-                        data={progressData}
+                        data={chartData}
                         width={SCREEN_WIDTH - spacing.lg * 4}
                         height={200}
-                        yAxisSuffix="%"
+                        yAxisSuffix={chartSuffix}
                         chartConfig={{
                             backgroundColor: colors.surface,
                             backgroundGradientFrom: colors.surfaceLight,
                             backgroundGradientTo: colors.surface,
-                            decimalPlaces: 1,
+                            decimalPlaces: chartDecimalPlaces,
                             // Convert the hex accent color to rgb for chart-kit:
                             color: (opacity = 1) => {
                                 const hexMatch = colors.accent.match(/\w\w/g);
@@ -162,7 +288,13 @@ export default function MyProgressScreen() {
                     />
                     <View style={styles.chartLegend}>
                         <View style={styles.legendDot} />
-                        <Text style={styles.legendText}>Önceki kayıtlarına göre gelişen hareket oranı</Text>
+                        <Text style={styles.legendText}>
+                            {chartMetric.startsWith("exercise:")
+                                ? "Seçili harekette önceki en iyi kayda göre gelişim"
+                                : chartMetric === "progress:all"
+                                    ? "Önceki kayıtlarına göre gelişen hareket oranı"
+                                    : "Profilde kaydettiğin takip verileri"}
+                        </Text>
                     </View>
                 </GymCard>
 
@@ -309,6 +441,31 @@ const createStyles = (colors: any) => StyleSheet.create({
         flexDirection: "row",
         marginBottom: spacing.xl,
         gap: spacing.sm,
+    },
+    metricFilterRow: {
+        gap: spacing.sm,
+        paddingBottom: spacing.md,
+        marginBottom: spacing.sm,
+    },
+    metricFilterBtn: {
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: borderRadius.md,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surface,
+    },
+    metricFilterBtnActive: {
+        borderColor: colors.accent,
+        backgroundColor: colors.accentMuted,
+    },
+    metricFilterText: {
+        color: colors.textSecondary,
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.semibold,
+    },
+    metricFilterTextActive: {
+        color: colors.accent,
     },
     filterBtn: {
         flex: 1,
