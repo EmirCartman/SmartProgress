@@ -29,6 +29,7 @@ import {
 import { useTheme } from "../hooks/ThemeContext";
 import PrivacyModal from "../components/PrivacyModal";
 import ActionConfirmModal from "../components/ActionConfirmModal";
+import NoticeModal from "../components/NoticeModal";
 
 // ─── Helpers ─────────────────────────────────
 
@@ -131,6 +132,7 @@ export default function ProgramCreateScreen() {
     const [privacyModalVisible, setPrivacyModalVisible] = useState(false);
     const [pendingAction, setPendingAction] = useState<PendingAction>(null);
     const [copyTargetsVisible, setCopyTargetsVisible] = useState(false);
+    const [validationNotice, setValidationNotice] = useState<{ title: string; message: string } | null>(null);
 
     // Pre-populate fields in edit mode
     useEffect(() => {
@@ -459,13 +461,16 @@ export default function ProgramCreateScreen() {
 
     const handleSave = useCallback(() => {
         if (safeString(name) === "") {
-            showAlert("Hata", "Lütfen programa bir isim verin.");
+            setValidationNotice({ title: "Program adı eksik", message: "Kaydetmeden önce programa bir isim verin." });
             return;
         }
 
-        const hasExercises = days.some((d) => d.exercises.length > 0);
-        if (!hasExercises) {
-            showAlert("Hata", "En az bir güne egzersiz ekleyin.");
+        const emptyWorkoutDays = days.filter((day) => !day.isRestDay && day.exercises.length === 0);
+        if (emptyWorkoutDays.length > 0) {
+            setValidationNotice({
+                title: "Eksik günler var",
+                message: `${emptyWorkoutDays.map((day) => day.label).join(", ")} için en az bir egzersiz eklemelisin.`,
+            });
             return;
         }
 
@@ -474,16 +479,25 @@ export default function ProgramCreateScreen() {
 
             for (const ex of day.exercises) {
                 if (safeString(ex.name) === "") {
-                    showAlert("Hata", `${day.label}: Tüm egzersizlerin ismi olmalı.`);
+                    setValidationNotice({
+                        title: "Egzersiz adı eksik",
+                        message: `${day.label} içinde tüm egzersizlerin ismi olmalı.`,
+                    });
                     return;
                 }
                 if (ex.targetSets.length === 0) {
-                    showAlert("Hata", `"${ex.name}" için en az bir set ekleyin.`);
+                    setValidationNotice({
+                        title: "Set eksik",
+                        message: `"${ex.name}" için en az bir set ekleyin.`,
+                    });
                     return;
                 }
                 for (const s of ex.targetSets) {
                     if (safeString(s.targetReps) === "") {
-                        showAlert("Hata", `"${ex.name}" egzersizinin eksik tekrar hedefleri var.`);
+                        setValidationNotice({
+                            title: "Tekrar hedefi eksik",
+                            message: `"${ex.name}" egzersizinin eksik tekrar hedefleri var.`,
+                        });
                         return;
                     }
                 }
@@ -940,6 +954,12 @@ export default function ProgramCreateScreen() {
                     onDismiss={() => setPendingAction(null)}
                 />
             )}
+            <NoticeModal
+                visible={!!validationNotice}
+                title={validationNotice?.title ?? ""}
+                message={validationNotice?.message ?? ""}
+                onClose={() => setValidationNotice(null)}
+            />
         </KeyboardAvoidingView>
     );
 }
