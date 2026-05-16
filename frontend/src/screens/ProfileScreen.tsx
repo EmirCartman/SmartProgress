@@ -271,6 +271,23 @@ export default function ProfileScreen() {
                     </View>
                     <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
                 </TouchableOpacity>
+                <View style={styles.settingDivider} />
+                <TouchableOpacity
+                    style={styles.settingRow}
+                    activeOpacity={0.75}
+                    onPress={() => navigation.navigate("Nutrition")}
+                >
+                    <View style={styles.settingInfo}>
+                        <View style={styles.settingIconWrap}>
+                            <Ionicons name="nutrition-outline" size={20} color={colors.accent} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.settingTitle}>Kalori ve Makro</Text>
+                            <Text style={styles.settingDesc}>Günlük kalori, protein, karbonhidrat ve yağ takibi</Text>
+                        </View>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color={colors.textMuted} />
+                </TouchableOpacity>
             </GymCard>
 
             {/* ─── Settings ─── */}

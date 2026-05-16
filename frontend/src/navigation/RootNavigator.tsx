@@ -22,6 +22,7 @@ import ProfileEditScreen from "../screens/ProfileEditScreen";
 import RecordsScreen from "../screens/RecordsScreen";
 import CommunityProgramsScreen from "../screens/CommunityProgramsScreen";
 import BodyMeasurementsScreen from "../screens/BodyMeasurementsScreen";
+import NutritionScreen from "../screens/NutritionScreen";
 
 // ─── Types ───────────────────────────────────
 
@@ -84,6 +85,7 @@ export type RootStackParamList = {
     ProfileEdit: undefined;
     Records: undefined;
     BodyMeasurements: undefined;
+    Nutrition: undefined;
 };
 
 const AppStack = createNativeStackNavigator<RootStackParamList>();
@@ -167,6 +169,11 @@ function AppNavigator() {
             <AppStack.Screen
                 name="BodyMeasurements"
                 component={BodyMeasurementsScreen}
+                options={{ animation: "slide_from_right" }}
+            />
+            <AppStack.Screen
+                name="Nutrition"
+                component={NutritionScreen}
                 options={{ animation: "slide_from_right" }}
             />
         </AppStack.Navigator>

@@ -159,6 +159,22 @@ export const bodyMeasurementApi = {
     delete: (id: string) => api.delete(`/body-measurements/${id}`),
 };
 
+export const nutritionApi = {
+    list: (params?: { limit?: number }) =>
+        api.get("/nutrition", { params }),
+
+    save: (data: {
+        date: string;
+        calories?: number | string | null;
+        protein?: number | string | null;
+        carbs?: number | string | null;
+        fat?: number | string | null;
+        notes?: string | null;
+    }) => api.post("/nutrition", data),
+
+    delete: (id: string) => api.delete(`/nutrition/${id}`),
+};
+
 // ─── Program Endpoints ───────────────────────
 
 export const programApi = {
