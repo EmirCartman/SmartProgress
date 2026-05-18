@@ -14,6 +14,7 @@ import {
     Platform,
     KeyboardAvoidingView,
     AppState,
+    Modal,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
@@ -152,6 +153,9 @@ export default function WorkoutSessionScreen() {
     const [emptyFinishModalVisible, setEmptyFinishModalVisible] = useState(false);
     const [exitModalVisible, setExitModalVisible] = useState(false);
     const [exitModalHasData, setExitModalHasData] = useState(false);
+    const [addExerciseModalVisible, setAddExerciseModalVisible] = useState(false);
+    const [newExerciseName, setNewExerciseName] = useState("");
+    const [newExerciseIndex, setNewExerciseIndex] = useState(0);
     const isWeb = Platform.OS === "web";
 
     // Use a ref for finishing flag so beforeRemove always has the latest value
@@ -547,24 +551,37 @@ export default function WorkoutSessionScreen() {
         }));
     }, [updateSession]);
 
-    const addExercise = useCallback(() => {
+    const openAddExerciseModal = useCallback(() => {
+        setNewExerciseName("");
+        setNewExerciseIndex(session.exercises.length);
+        setAddExerciseModalVisible(true);
+    }, [session.exercises.length]);
+
+    const addExerciseAtSelectedPosition = useCallback(() => {
         const newEx: WorkoutExercise = {
             id: uid(),
-            name: "",
+            name: newExerciseName.trim(),
             isCustom: true,
             sets: [
                 { id: uid(), weight: 0, reps: 0, unit: "kg", completed: false },
             ],
         };
-        updateSession((prev) => ({
-            ...prev,
-            exercises: [...prev.exercises, newEx],
-        }));
+        const insertIndex = Math.max(0, Math.min(newExerciseIndex, session.exercises.length));
+        updateSession((prev) => {
+            const exercises = [...prev.exercises];
+            exercises.splice(insertIndex, 0, newEx);
+            return { ...prev, exercises };
+        });
+        setAddExerciseModalVisible(false);
+        setNewExerciseName("");
         setRecentlyAddedExerciseId(newEx.id);
         requestAnimationFrame(() => {
-            webScrollRef.current?.scrollToEnd({ animated: true });
+            webScrollRef.current?.scrollTo({
+                y: Math.max(0, insertIndex * 260),
+                animated: true,
+            });
         });
-    }, [updateSession]);
+    }, [newExerciseIndex, newExerciseName, session.exercises.length, updateSession]);
 
     const removeExercise = useCallback((exerciseId: string) => {
         updateSession((prev) => ({
@@ -836,7 +853,7 @@ export default function WorkoutSessionScreen() {
 
                     <TouchableOpacity
                         style={[styles.rirToggleBtn, { borderColor: colors.accent }]}
-                        onPress={addExercise}
+                        onPress={openAddExerciseModal}
                     >
                         <Ionicons name="add" size={16} color={colors.accent} />
                     </TouchableOpacity>
@@ -1306,6 +1323,110 @@ export default function WorkoutSessionScreen() {
                     setExitModalVisible(false);
                 }}
             />
+            <Modal
+                visible={addExerciseModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setAddExerciseModalVisible(false)}
+            >
+                <View style={styles.addExerciseOverlay}>
+                    <View style={styles.addExerciseModal}>
+                        <Text style={styles.addExerciseTitle}>Hareket ekle</Text>
+                        <TextInput
+                            style={styles.addExerciseInput}
+                            value={newExerciseName}
+                            onChangeText={setNewExerciseName}
+                            placeholder="Hareket adı"
+                            placeholderTextColor={colors.textMuted}
+                            selectionColor={colors.accent}
+                            autoFocus
+                        />
+                        <Text style={styles.addExerciseSectionLabel}>Konum</Text>
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            contentContainerStyle={styles.positionList}
+                            keyboardShouldPersistTaps="handled"
+                        >
+                            {session.exercises.map((exercise, index) => (
+                                <TouchableOpacity
+                                    key={exercise.id}
+                                    style={[
+                                        styles.positionChip,
+                                        newExerciseIndex === index && styles.positionChipActive,
+                                    ]}
+                                    onPress={() => setNewExerciseIndex(index)}
+                                    activeOpacity={0.8}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.positionChipText,
+                                            newExerciseIndex === index && styles.positionChipTextActive,
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {index + 1}. sıraya
+                                    </Text>
+                                    <Text
+                                        style={[
+                                            styles.positionChipSubText,
+                                            newExerciseIndex === index && styles.positionChipTextActive,
+                                        ]}
+                                        numberOfLines={1}
+                                    >
+                                        {exercise.name || "Adsız"}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                            <TouchableOpacity
+                                style={[
+                                    styles.positionChip,
+                                    newExerciseIndex === session.exercises.length && styles.positionChipActive,
+                                ]}
+                                onPress={() => setNewExerciseIndex(session.exercises.length)}
+                                activeOpacity={0.8}
+                            >
+                                <Text
+                                    style={[
+                                        styles.positionChipText,
+                                        newExerciseIndex === session.exercises.length && styles.positionChipTextActive,
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    En sona
+                                </Text>
+                                <Text
+                                    style={[
+                                        styles.positionChipSubText,
+                                        newExerciseIndex === session.exercises.length && styles.positionChipTextActive,
+                                    ]}
+                                    numberOfLines={1}
+                                >
+                                    {session.exercises.length + 1}. sıra
+                                </Text>
+                            </TouchableOpacity>
+                        </ScrollView>
+                        <View style={styles.addExerciseActions}>
+                            <TouchableOpacity
+                                style={styles.modalSecondaryBtn}
+                                onPress={() => setAddExerciseModalVisible(false)}
+                            >
+                                <Text style={styles.modalSecondaryText}>İptal</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={[
+                                    styles.modalPrimaryBtn,
+                                    !newExerciseName.trim() && styles.modalPrimaryBtnDisabled,
+                                ]}
+                                onPress={addExerciseAtSelectedPosition}
+                                disabled={!newExerciseName.trim()}
+                            >
+                                <Text style={styles.modalPrimaryText}>Ekle</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
             {isWeb ? (
                 <ScrollView
                     ref={webScrollRef}
@@ -1616,6 +1737,114 @@ const createStyles = (colors: any) => StyleSheet.create({
         borderColor: colors.accent,
         borderRadius: borderRadius.md,
         borderStyle: "dashed",
+    },
+    addExerciseOverlay: {
+        flex: 1,
+        backgroundColor: "rgba(0,0,0,0.62)",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: spacing.lg,
+    },
+    addExerciseModal: {
+        width: "100%",
+        maxWidth: 440,
+        borderRadius: borderRadius.lg,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+        padding: spacing.lg,
+    },
+    addExerciseTitle: {
+        fontSize: fontSize.xl,
+        fontWeight: fontWeight.heavy,
+        color: colors.text,
+        marginBottom: spacing.md,
+    },
+    addExerciseInput: {
+        backgroundColor: colors.surfaceLight,
+        borderRadius: borderRadius.md,
+        borderWidth: 1.5,
+        borderColor: colors.border,
+        color: colors.text,
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.semibold,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.md,
+        marginBottom: spacing.md,
+    },
+    addExerciseSectionLabel: {
+        fontSize: fontSize.xs,
+        fontWeight: fontWeight.bold,
+        color: colors.textMuted,
+        textTransform: "uppercase",
+        letterSpacing: 1,
+        marginBottom: spacing.sm,
+    },
+    positionList: {
+        gap: spacing.sm,
+        paddingBottom: spacing.xs,
+    },
+    positionChip: {
+        width: 116,
+        minHeight: 58,
+        borderRadius: borderRadius.md,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceElevated,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: spacing.sm,
+        justifyContent: "center",
+    },
+    positionChipActive: {
+        backgroundColor: colors.accent,
+        borderColor: colors.accent,
+    },
+    positionChipText: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.bold,
+        color: colors.text,
+    },
+    positionChipSubText: {
+        marginTop: 2,
+        fontSize: fontSize.xs,
+        color: colors.textMuted,
+    },
+    positionChipTextActive: {
+        color: colors.background,
+    },
+    addExerciseActions: {
+        flexDirection: "row",
+        gap: spacing.sm,
+        marginTop: spacing.lg,
+    },
+    modalSecondaryBtn: {
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: spacing.md,
+        borderRadius: borderRadius.md,
+        backgroundColor: colors.surfaceElevated,
+    },
+    modalSecondaryText: {
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.bold,
+        color: colors.textSecondary,
+    },
+    modalPrimaryBtn: {
+        flex: 1,
+        alignItems: "center",
+        justifyContent: "center",
+        paddingVertical: spacing.md,
+        borderRadius: borderRadius.md,
+        backgroundColor: colors.accent,
+    },
+    modalPrimaryBtnDisabled: {
+        opacity: 0.45,
+    },
+    modalPrimaryText: {
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.bold,
+        color: colors.background,
     },
 
     // Finish
