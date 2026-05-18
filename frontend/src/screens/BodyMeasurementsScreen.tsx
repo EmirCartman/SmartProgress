@@ -31,6 +31,18 @@ const FIELDS = [
 
 type FieldKey = typeof FIELDS[number][0];
 
+function toNumber(value: unknown): number {
+    if (value === null || value === undefined || value === "") return 0;
+    const parsed = Number(String(value).replace(",", "."));
+    return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatDateLabel(value: unknown): string {
+    const date = new Date(String(value || ""));
+    if (!Number.isFinite(date.getTime())) return "";
+    return date.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" });
+}
+
 export default function BodyMeasurementsScreen() {
     const navigation = useNavigation<any>();
     const { colors } = useTheme();
@@ -98,15 +110,25 @@ export default function BodyMeasurementsScreen() {
     };
 
     const chartRecords = [...records]
-        .reverse()
-        .filter((record) => Number(record[selectedField]) > 0)
-        .slice(-8);
+        .sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime())
+        .filter((record) => toNumber(record[selectedField]) > 0);
+    const labelStep = Math.max(1, Math.ceil(chartRecords.length / 5));
     const chartData = chartRecords.length > 0
         ? {
-            labels: chartRecords.map((_, index) => `${index + 1}`),
-            datasets: [{ data: chartRecords.map((record) => Number(record[selectedField])) }],
+            labels: chartRecords.map((record, index) =>
+                index === 0 || index === chartRecords.length - 1 || index % labelStep === 0
+                    ? formatDateLabel(record.date)
+                    : "",
+            ),
+            datasets: [{ data: chartRecords.map((record) => toNumber(record[selectedField])) }],
         }
         : { labels: ["-"], datasets: [{ data: [0] }] };
+    const selectedMeta = FIELDS.find(([key]) => key === selectedField);
+    const trendStart = chartRecords[0] ? toNumber(chartRecords[0][selectedField]) : 0;
+    const trendEnd = chartRecords[chartRecords.length - 1] ? toNumber(chartRecords[chartRecords.length - 1][selectedField]) : 0;
+    const trendDelta = trendEnd - trendStart;
+    const trendPercent = trendStart > 0 ? (trendDelta / trendStart) * 100 : 0;
+    const trendUnit = selectedMeta?.[2] ?? "";
 
     return (
         <View style={styles.root}>
@@ -174,6 +196,17 @@ export default function BodyMeasurementsScreen() {
                                 </TouchableOpacity>
                             ))}
                         </ScrollView>
+                        {chartRecords.length >= 2 ? (
+                            <View style={styles.trendSummary}>
+                                <Text style={styles.trendLabel}>Overall değişim</Text>
+                                <Text style={[styles.trendValue, trendDelta >= 0 ? styles.trendPositive : styles.trendNegative]}>
+                                    {trendDelta >= 0 ? "+" : ""}{trendDelta.toFixed(1)} {trendUnit}
+                                    {"  "}({trendDelta >= 0 ? "+" : ""}{trendPercent.toFixed(1)}%)
+                                </Text>
+                            </View>
+                        ) : (
+                            <Text style={styles.trendHint}>Overall trend için en az 2 kayıt gerekir.</Text>
+                        )}
                         <LineChart
                             data={chartData}
                             width={SCREEN_WIDTH - spacing.lg * 4}
@@ -274,6 +307,18 @@ const createStyles = (colors: any) => StyleSheet.create({
     segmentActive: { borderColor: colors.accent, backgroundColor: colors.accentMuted },
     segmentText: { color: colors.textSecondary, fontSize: fontSize.sm, fontWeight: fontWeight.semibold },
     segmentTextActive: { color: colors.accent },
+    trendSummary: {
+        padding: spacing.md,
+        borderRadius: borderRadius.md,
+        borderWidth: 1,
+        borderColor: colors.border,
+        backgroundColor: colors.surfaceElevated,
+    },
+    trendLabel: { color: colors.textMuted, fontSize: fontSize.xs, fontWeight: fontWeight.semibold },
+    trendValue: { marginTop: 2, fontSize: fontSize.lg, fontWeight: fontWeight.bold },
+    trendPositive: { color: colors.accent },
+    trendNegative: { color: colors.error },
+    trendHint: { color: colors.textMuted, fontSize: fontSize.sm },
     chart: { marginLeft: -spacing.md },
     sectionTitle: { color: colors.text, fontSize: fontSize.lg, fontWeight: fontWeight.bold, marginTop: spacing.md },
     emptyText: { color: colors.textMuted, textAlign: "center", marginTop: spacing.md },

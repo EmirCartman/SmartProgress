@@ -36,6 +36,12 @@ function toNumber(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function formatDateLabel(value: unknown): string {
+    const date = new Date(String(value || ""));
+    if (!Number.isFinite(date.getTime())) return "";
+    return date.toLocaleDateString("tr-TR", { day: "2-digit", month: "2-digit" });
+}
+
 function bestSetForExercise(workout: any, exerciseName: string) {
     const target = exerciseName.trim().toLowerCase();
     const exercise = workout?.data?.exercises?.find((ex: any) => String(ex.name || "").trim().toLowerCase() === target);
@@ -127,23 +133,23 @@ export default function MyProgressScreen() {
                     labels.push(`A${idx + 1}`);
                 });
         } else if (metric === "body:weight") {
-            [...measurements]
-                .reverse()
-                .filter((record) => new Date(record.date || 0) >= cutoff && Number(record.weight) > 0)
-                .slice(-12)
-                .forEach((record, idx) => {
-                    dataPoints.push(Number(record.weight));
-                    labels.push(`${idx + 1}`);
+            const records = [...measurements]
+                .sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime())
+                .filter((record) => new Date(record.date || 0) >= cutoff && toNumber(record.weight) > 0);
+            const labelStep = Math.max(1, Math.ceil(records.length / 5));
+            records.forEach((record, idx) => {
+                    dataPoints.push(toNumber(record.weight));
+                    labels.push(idx === 0 || idx === records.length - 1 || idx % labelStep === 0 ? formatDateLabel(record.date) : "");
                 });
         } else {
             const field = metric.replace("nutrition:", "");
-            [...nutrition]
-                .reverse()
-                .filter((record) => new Date(record.date || 0) >= cutoff && Number(record[field]) > 0)
-                .slice(-12)
-                .forEach((record, idx) => {
-                    dataPoints.push(Number(record[field]));
-                    labels.push(`${idx + 1}`);
+            const records = [...nutrition]
+                .sort((a, b) => new Date(a.date || 0).getTime() - new Date(b.date || 0).getTime())
+                .filter((record) => new Date(record.date || 0) >= cutoff && toNumber(record[field]) > 0);
+            const labelStep = Math.max(1, Math.ceil(records.length / 5));
+            records.forEach((record, idx) => {
+                    dataPoints.push(toNumber(record[field]));
+                    labels.push(idx === 0 || idx === records.length - 1 || idx % labelStep === 0 ? formatDateLabel(record.date) : "");
                 });
         }
 
