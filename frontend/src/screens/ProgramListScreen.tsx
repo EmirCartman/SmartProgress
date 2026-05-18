@@ -111,6 +111,10 @@ export default function ProgramListScreen() {
                     keyExtractor={(item) => item.id}
                     contentContainerStyle={styles.list}
                     renderItem={({ item }) => (
+                        <TouchableOpacity
+                            activeOpacity={0.86}
+                            onPress={() => navigation.navigate("ProgramDetail", { programId: item.id })}
+                        >
                         <GymCard elevated style={styles.card}>
                             <View style={styles.cardHeader}>
                                 <Text style={styles.progName} numberOfLines={1}>
@@ -177,6 +181,7 @@ export default function ProgramListScreen() {
                                 </TouchableOpacity>
                             </View>
                         </GymCard>
+                        </TouchableOpacity>
                     )}
                 />
             )}
