@@ -10,7 +10,8 @@ export interface WorkoutSet {
     weight: number;
     reps: number;
     unit: "kg" | "lbs";
-    rpe?: number | string; // Rate of Perceived Exertion (1-10) or RIR range like "1-2"
+    rpe?: number | string; // Rate of Perceived Exertion (1-10)
+    rir?: number | string; // Reps in reserve
     completed: boolean;
     isWarmup?: boolean;    // warmup set flag
     targetReps?: string;   // from program template

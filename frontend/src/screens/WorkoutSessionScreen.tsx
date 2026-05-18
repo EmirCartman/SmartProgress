@@ -13,6 +13,7 @@ import {
     StyleSheet,
     Platform,
     KeyboardAvoidingView,
+    AppState,
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { useNavigation, useRoute, RouteProp } from "@react-navigation/native";
@@ -207,7 +208,9 @@ export default function WorkoutSessionScreen() {
             const currentSet = session.exercises
                 .find((exercise) => exercise.id === exerciseId)
                 ?.sets.find((set) => set.id === setId);
-            updateSet(exerciseId, setId, field as any, clampRir(raw, currentSet?.reps) ?? "");
+            const cachedReps = textCache[cacheKey(exerciseId, setId, "reps")];
+            const repsForClamp = cachedReps !== undefined ? parseInt(cachedReps, 10) || 0 : currentSet?.reps;
+            updateSet(exerciseId, setId, field as any, clampRir(raw, repsForClamp) ?? "");
             setTextCache((prev) => {
                 const next = { ...prev };
                 delete next[key];
@@ -250,21 +253,26 @@ export default function WorkoutSessionScreen() {
         return nextSet;
     }, [textCache]);
 
-    const materializeSessionInputs = useCallback((): WorkoutSession => {
+    const getSessionWithCachedInputs = useCallback((): WorkoutSession => {
         if (Object.keys(textCache).length === 0) return session;
 
-        const nextSession = {
+        return {
             ...session,
             exercises: session.exercises.map((exercise) => ({
                 ...exercise,
                 sets: exercise.sets.map((set) => setFromCache(set, exercise.id)),
             })),
         };
+    }, [session, setFromCache, textCache]);
 
+    const materializeSessionInputs = useCallback((): WorkoutSession => {
+        if (Object.keys(textCache).length === 0) return session;
+
+        const nextSession = getSessionWithCachedInputs();
         setSession(nextSession);
         setTextCache({});
         return nextSession;
-    }, [session, setFromCache, textCache]);
+    }, [getSessionWithCachedInputs, session, textCache]);
 
     // ─── Restore Active Session / Load Program ─
     useEffect(() => {
@@ -423,12 +431,51 @@ export default function WorkoutSessionScreen() {
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         saveTimerRef.current = setTimeout(() => {
             if (finishingRef.current) return;
-            saveActiveSession({ ...session, totalDuration: elapsed });
+            const nextSession = { ...getSessionWithCachedInputs(), totalDuration: elapsed };
+            if (nextSession.exercises.length > 0) {
+                saveActiveSession(nextSession);
+            }
         }, AUTOSAVE_DEBOUNCE_MS);
         return () => {
             if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         };
-    }, [session, elapsed, restored]);
+    }, [elapsed, getSessionWithCachedInputs, restored]);
+
+    useEffect(() => {
+        if (!restored) return;
+
+        const persistNow = () => {
+            if (finishingRef.current) return;
+            const nextSession = { ...getSessionWithCachedInputs(), totalDuration: elapsed };
+            if (nextSession.exercises.length > 0) {
+                saveActiveSession(nextSession);
+            }
+        };
+
+        const appStateSubscription = AppState.addEventListener("change", (state) => {
+            if (state === "inactive" || state === "background") persistNow();
+        });
+
+        if (!isWeb || typeof document === "undefined") {
+            return () => appStateSubscription.remove();
+        }
+
+        const handleVisibility = () => {
+            if (document.visibilityState === "hidden") persistNow();
+        };
+        const handlePageHide = () => persistNow();
+
+        document.addEventListener("visibilitychange", handleVisibility);
+        window.addEventListener("pagehide", handlePageHide);
+        window.addEventListener("beforeunload", handlePageHide);
+
+        return () => {
+            appStateSubscription.remove();
+            document.removeEventListener("visibilitychange", handleVisibility);
+            window.removeEventListener("pagehide", handlePageHide);
+            window.removeEventListener("beforeunload", handlePageHide);
+        };
+    }, [elapsed, getSessionWithCachedInputs, isWeb, restored]);
 
     // ─── Back Navigation — ask before leaving active workout ─
     useEffect(() => {
