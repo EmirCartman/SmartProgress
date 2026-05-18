@@ -233,6 +233,23 @@ export default function HomeScreen() {
             {/* ─── Active Workout Banner ─── */}
             <ActiveWorkoutBanner refreshKey={bannerRefresh} />
 
+            <TouchableOpacity
+                style={styles.quickWorkoutCard}
+                onPress={() => navigation.navigate("WorkoutSession", { mode: "free" })}
+                activeOpacity={0.86}
+            >
+                <View style={styles.quickWorkoutIcon}>
+                    <Ionicons name="flash-outline" size={20} color={colors.background} />
+                </View>
+                <View style={{ flex: 1 }}>
+                    <Text style={styles.quickWorkoutTitle}>Serbest antrenman</Text>
+                    <Text style={styles.quickWorkoutSubtitle}>
+                        Program seçmeden hareket ekleyip logla
+                    </Text>
+                </View>
+                <Ionicons name="chevron-forward" size={18} color={colors.textMuted} />
+            </TouchableOpacity>
+
             {/* ─── Stats Row ─── */}
             <View style={styles.statsRow}>
                 <StatBadge
@@ -673,6 +690,35 @@ const createStyles = (colors: any) => StyleSheet.create({
         alignItems: "center", justifyContent: "center",
     },
     avatarText: { color: colors.accent, fontSize: fontSize.md, fontWeight: fontWeight.bold },
+    quickWorkoutCard: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.md,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: borderRadius.lg,
+        padding: spacing.md,
+        marginBottom: spacing.lg,
+    },
+    quickWorkoutIcon: {
+        width: 42,
+        height: 42,
+        borderRadius: 21,
+        backgroundColor: colors.accent,
+        alignItems: "center",
+        justifyContent: "center",
+    },
+    quickWorkoutTitle: {
+        fontSize: fontSize.md,
+        fontWeight: fontWeight.bold,
+        color: colors.text,
+    },
+    quickWorkoutSubtitle: {
+        marginTop: 2,
+        fontSize: fontSize.sm,
+        color: colors.textSecondary,
+    },
     statsRow: { flexDirection: "row", marginBottom: spacing.xl },
     // Today/Next Card
     todayCard: { marginBottom: spacing.xxl, borderColor: colors.accent, borderWidth: 1 },

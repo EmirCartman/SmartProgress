@@ -29,6 +29,7 @@ import NutritionScreen from "../screens/NutritionScreen";
 export type RootStackParamList = {
     MainTabs: undefined;
     WorkoutSession: {
+        mode?: "free";
         programId?: string;
         programName?: string;
         dayIndex?: number;

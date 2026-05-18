@@ -319,12 +319,29 @@ export default function WorkoutSessionScreen() {
 
             const params = route.params;
             const hasProgramParams = !!(params?.programId || params?.programData);
+            const isFreeWorkout = params?.mode === "free";
+
+            if (isFreeWorkout) {
+                const saved = await restoreActiveSession();
+                if (saved && saved.status === "active" && !saved.completedAt) {
+                    setSession(saved);
+                    const start = new Date(saved.startedAt).getTime();
+                    setElapsed(Math.floor((Date.now() - start) / 1000));
+                } else {
+                    await clearActiveSession();
+                    setSession({
+                        ...createSession(),
+                        title: "Serbest Antrenman",
+                    });
+                    setElapsed(0);
+                }
+            }
 
             // ────────────────────────────────────────
             // CASE 1: Coming from a program → ALWAYS start fresh
             // Clear any stale session and load program data
             // ────────────────────────────────────────
-            if (hasProgramParams) {
+            if (!isFreeWorkout && hasProgramParams) {
                 console.log("[WorkoutSession] Program params detected, clearing any old session");
                 await clearActiveSession();
 
@@ -440,7 +457,7 @@ export default function WorkoutSessionScreen() {
             // ────────────────────────────────────────
             // CASE 2: No program params → try to restore saved session
             // ────────────────────────────────────────
-            else {
+            else if (!isFreeWorkout) {
                 const saved = await restoreActiveSession();
                 if (saved && saved.status === "active" && !saved.completedAt) {
                     setSession(saved);
