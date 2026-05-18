@@ -39,7 +39,7 @@ import {
     savePendingWorkout,
     syncPendingWorkouts,
 } from "../services/syncService";
-import { programApi } from "../services/api";
+import { programApi, workoutApi } from "../services/api";
 import { useAuth } from "../store/AuthContext";
 import AccentButton from "../components/AccentButton";
 import { showAlert } from "../utils/confirm";
@@ -132,6 +132,36 @@ function normalizeProgramData(raw: any): ProgramData | null {
         keys: Object.keys(data || {}),
     });
     return null;
+}
+
+function normalizeExerciseNameForLookup(name: unknown): string {
+    return String(name || "").trim().toLowerCase();
+}
+
+function buildPreviousWeightLookup(workouts: any[]): Map<string, number[]> {
+    const lookup = new Map<string, number[]>();
+    const newestFirst = [...workouts].sort(
+        (a, b) => new Date(b.logDate || b.createdAt || 0).getTime() - new Date(a.logDate || a.createdAt || 0).getTime(),
+    );
+
+    newestFirst.forEach((workout) => {
+        const exercises = Array.isArray(workout?.data?.exercises) ? workout.data.exercises : [];
+        exercises.forEach((exercise: any) => {
+            const key = normalizeExerciseNameForLookup(exercise?.name);
+            if (!key || lookup.has(key)) return;
+
+            const weights = (Array.isArray(exercise?.sets) ? exercise.sets : [])
+                .filter((set: any) => !set?.isWarmup)
+                .map((set: any) => Number(set?.weight))
+                .filter((weight: number) => Number.isFinite(weight) && weight > 0);
+
+            if (weights.length > 0) {
+                lookup.set(key, weights);
+            }
+        });
+    });
+
+    return lookup;
 }
 
 // ─── Component ───────────────────────────────
@@ -349,8 +379,19 @@ export default function WorkoutSessionScreen() {
                         ? `${programName ?? "Antrenman"} · ${dayLabel}`
                         : (programName ?? "Antrenman");
 
+                    let previousWeights = new Map<string, number[]>();
+                    try {
+                        const workoutRes = await workoutApi.list({ limit: 200 });
+                        previousWeights = buildPreviousWeightLookup(workoutRes.data.workouts || []);
+                    } catch (err) {
+                        console.warn("[WorkoutSession] Previous weights could not be loaded:", err);
+                    }
+
                     const newExercises: WorkoutExercise[] = templateExercises.map((templateEx: any) => {
                         const targetSet = templateEx.targetSets?.[0] ?? templateEx.sets?.[0];
+                        const exercisePreviousWeights =
+                            previousWeights.get(normalizeExerciseNameForLookup(templateEx.name)) || [];
+                        let workingSetIndex = 0;
                         return {
                             id: uid(),
                             name: templateEx.name,
@@ -358,19 +399,25 @@ export default function WorkoutSessionScreen() {
                             targetWeight: targetSet?.targetWeight,
                             targetRPE: targetSet?.targetRPE,
                             targetRIR: targetSet?.targetRIR,
-                            sets: (templateEx.targetSets ?? templateEx.sets ?? [{}]).map((ts: TargetSet) => ({
-                                id: uid(),
-                                weight: 0,
-                                reps: 0,
-                                rpe: 0,
-                                unit: "kg" as const,
-                                completed: false,
-                                isWarmup: !!ts?.isWarmup,
-                                targetReps: ts?.targetReps,
-                                targetWeight: ts?.targetWeight,
-                                targetRPE: ts?.targetRPE,
-                                targetRIR: ts?.targetRIR,
-                            })),
+                            sets: (templateEx.targetSets ?? templateEx.sets ?? [{}]).map((ts: TargetSet) => {
+                                const isWarmup = !!ts?.isWarmup;
+                                const previousWeight = isWarmup
+                                    ? undefined
+                                    : exercisePreviousWeights[workingSetIndex++];
+                                return {
+                                    id: uid(),
+                                    weight: 0,
+                                    reps: 0,
+                                    rpe: 0,
+                                    unit: "kg" as const,
+                                    completed: false,
+                                    isWarmup,
+                                    targetReps: ts?.targetReps,
+                                    targetWeight: previousWeight ? String(previousWeight) : ts?.targetWeight,
+                                    targetRPE: ts?.targetRPE,
+                                    targetRIR: ts?.targetRIR,
+                                };
+                            }),
                         };
                     });
                     setSession(prev => ({
