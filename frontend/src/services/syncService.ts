@@ -34,6 +34,7 @@ function sessionToPayload(session: WorkoutSession): SyncWorkoutPayload {
     return {
         sportId: session.sportId,
         title: session.title,
+        notes: session.notes?.trim() || undefined,
         data: {
             exercises: session.exercises.map((ex) => ({
                 name: ex.name,

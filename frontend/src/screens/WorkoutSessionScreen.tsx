@@ -187,6 +187,8 @@ export default function WorkoutSessionScreen() {
     const [addExerciseModalVisible, setAddExerciseModalVisible] = useState(false);
     const [newExerciseName, setNewExerciseName] = useState("");
     const [newExerciseIndex, setNewExerciseIndex] = useState(0);
+    const [noteModalVisible, setNoteModalVisible] = useState(false);
+    const [noteDraft, setNoteDraft] = useState("");
     const [conceptNotice, setConceptNotice] = useState<{ title: string; message: string } | null>(null);
     const isWeb = Platform.OS === "web";
 
@@ -553,6 +555,23 @@ export default function WorkoutSessionScreen() {
     const updateSession = useCallback((updater: (prev: WorkoutSession) => WorkoutSession) => {
         setSession(updater);
     }, []);
+
+    const openNoteModal = useCallback(() => {
+        setNoteDraft(session.notes ?? "");
+        setNoteModalVisible(true);
+    }, [session.notes]);
+
+    const saveWorkoutNote = useCallback(() => {
+        const notes = noteDraft.trim();
+        updateSession((prev) => ({ ...prev, notes: notes || undefined }));
+        setNoteModalVisible(false);
+    }, [noteDraft, updateSession]);
+
+    const clearWorkoutNote = useCallback(() => {
+        setNoteDraft("");
+        updateSession((prev) => ({ ...prev, notes: undefined }));
+        setNoteModalVisible(false);
+    }, [updateSession]);
 
     const updateSet = useCallback(
         (exerciseId: string, setId: string, field: keyof WorkoutSet, value: string | number | boolean) => {
@@ -926,6 +945,26 @@ export default function WorkoutSessionScreen() {
             <Text style={styles.titleText}>
                 {session.title || "Program Antrenmanı"}
             </Text>
+
+            <TouchableOpacity
+                style={[styles.sessionNoteBtn, session.notes && styles.sessionNoteBtnActive]}
+                onPress={openNoteModal}
+                activeOpacity={0.85}
+            >
+                <Ionicons
+                    name={session.notes ? "document-text" : "document-text-outline"}
+                    size={18}
+                    color={session.notes ? colors.background : colors.accent}
+                />
+                <Text style={[styles.sessionNoteBtnText, session.notes && styles.sessionNoteBtnTextActive]}>
+                    {session.notes ? "Notu düzenle" : "Not ekle"}
+                </Text>
+            </TouchableOpacity>
+            {session.notes ? (
+                <Text style={styles.sessionNotePreview} numberOfLines={2}>
+                    {session.notes}
+                </Text>
+            ) : null}
         </View>
     );
 
@@ -1388,6 +1427,55 @@ export default function WorkoutSessionScreen() {
                 onClose={() => setConceptNotice(null)}
             />
             <Modal
+                visible={noteModalVisible}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setNoteModalVisible(false)}
+            >
+                <View style={styles.addExerciseOverlay}>
+                    <View style={styles.addExerciseModal}>
+                        <Text style={styles.addExerciseTitle}>Antrenman notu</Text>
+                        <TextInput
+                            style={[styles.addExerciseInput, styles.sessionNoteInput]}
+                            value={noteDraft}
+                            onChangeText={setNoteDraft}
+                            placeholder="Bugün nasıl geçti, dikkat etmek istediğin şeyler..."
+                            placeholderTextColor={colors.textMuted}
+                            selectionColor={colors.accent}
+                            multiline
+                            maxLength={2000}
+                            textAlignVertical="top"
+                            autoFocus
+                        />
+                        <View style={styles.noteMetaRow}>
+                            <Text style={styles.noteMetaText}>{noteDraft.length}/2000</Text>
+                        </View>
+                        <View style={styles.addExerciseActions}>
+                            {session.notes ? (
+                                <TouchableOpacity
+                                    style={styles.modalSecondaryBtn}
+                                    onPress={clearWorkoutNote}
+                                >
+                                    <Text style={[styles.modalSecondaryText, styles.modalDangerText]}>Sil</Text>
+                                </TouchableOpacity>
+                            ) : null}
+                            <TouchableOpacity
+                                style={styles.modalSecondaryBtn}
+                                onPress={() => setNoteModalVisible(false)}
+                            >
+                                <Text style={styles.modalSecondaryText}>İptal</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.modalPrimaryBtn}
+                                onPress={saveWorkoutNote}
+                            >
+                                <Text style={styles.modalPrimaryText}>Kaydet</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+            <Modal
                 visible={addExerciseModalVisible}
                 transparent
                 animationType="fade"
@@ -1606,8 +1694,45 @@ const createStyles = (colors: any) => StyleSheet.create({
         fontSize: fontSize.xxl,
         fontWeight: fontWeight.heavy,
         color: colors.text,
-        marginBottom: spacing.xxl,
+        marginBottom: spacing.md,
         paddingVertical: spacing.sm,
+    },
+    sessionNoteBtn: {
+        alignSelf: "flex-start",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: spacing.xs,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        borderRadius: borderRadius.full,
+        borderWidth: 1,
+        borderColor: colors.accent,
+        backgroundColor: colors.surface,
+        marginBottom: spacing.sm,
+    },
+    sessionNoteBtnActive: {
+        backgroundColor: colors.accent,
+        borderColor: colors.accent,
+    },
+    sessionNoteBtnText: {
+        fontSize: fontSize.sm,
+        fontWeight: fontWeight.bold,
+        color: colors.accent,
+    },
+    sessionNoteBtnTextActive: {
+        color: colors.background,
+    },
+    sessionNotePreview: {
+        color: colors.textSecondary,
+        fontSize: fontSize.sm,
+        lineHeight: 20,
+        backgroundColor: colors.surface,
+        borderWidth: 1,
+        borderColor: colors.border,
+        borderRadius: borderRadius.md,
+        paddingHorizontal: spacing.md,
+        paddingVertical: spacing.sm,
+        marginBottom: spacing.lg,
     },
 
     // Exercise Card
@@ -1846,6 +1971,23 @@ const createStyles = (colors: any) => StyleSheet.create({
         paddingHorizontal: spacing.md,
         paddingVertical: spacing.md,
         marginBottom: spacing.md,
+    },
+    sessionNoteInput: {
+        minHeight: 132,
+        fontWeight: fontWeight.regular,
+        textAlignVertical: "top",
+    },
+    noteMetaRow: {
+        alignItems: "flex-end",
+        marginTop: -spacing.sm,
+        marginBottom: spacing.sm,
+    },
+    noteMetaText: {
+        fontSize: fontSize.xs,
+        color: colors.textMuted,
+    },
+    modalDangerText: {
+        color: colors.error,
     },
     addExerciseSectionLabel: {
         fontSize: fontSize.xs,
