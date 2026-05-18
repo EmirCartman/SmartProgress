@@ -54,6 +54,27 @@ export function clampRir(value: unknown, reps: unknown): number | undefined {
     return Math.min(maxReps, Math.max(0, numeric));
 }
 
+export function normalizeRirLogValue(value: unknown, reps: unknown): number | string | undefined {
+    if (value === null || value === undefined || value === "") return undefined;
+    const raw = String(value).trim().replace(/,/g, ".").replace(/[–—]/g, "-");
+    if (!raw) return undefined;
+
+    const maxReps = Math.max(0, Math.floor(toNumber(reps)));
+    const rangeMatch = raw.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/);
+    if (rangeMatch) {
+        const left = toNumber(rangeMatch[1]);
+        const right = toNumber(rangeMatch[2]);
+        if (!Number.isFinite(left) || !Number.isFinite(right)) return undefined;
+        const low = Math.min(left, right);
+        const high = Math.max(left, right);
+        const clampedHigh = maxReps > 0 ? Math.min(maxReps, Math.max(0, high)) : Math.max(0, high);
+        const clampedLow = Math.min(clampedHigh, Math.max(0, low));
+        return `${clampedLow}-${clampedHigh}`;
+    }
+
+    return clampRir(raw, reps);
+}
+
 export function getWorkoutExercises(workout: AnyWorkout): AnyExercise[] {
     return Array.isArray(workout?.data?.exercises) ? workout.data!.exercises! : [];
 }

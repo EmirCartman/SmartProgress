@@ -89,6 +89,27 @@ function clampRir(value: unknown, reps: unknown): number | undefined {
     return Math.min(Math.max(0, Math.floor(toNumber(reps))), Math.max(0, toNumber(value)));
 }
 
+function normalizeRirLogValue(value: unknown, reps: unknown): number | string | undefined {
+    if (value === null || value === undefined || value === "") return undefined;
+    const raw = String(value).trim().replace(/,/g, ".").replace(/[–—]/g, "-");
+    if (!raw) return undefined;
+
+    const maxReps = Math.max(0, Math.floor(toNumber(reps)));
+    const rangeMatch = raw.match(/^(\d+(?:\.\d+)?)\s*-\s*(\d+(?:\.\d+)?)$/);
+    if (rangeMatch) {
+        const left = toNumber(rangeMatch[1]);
+        const right = toNumber(rangeMatch[2]);
+        if (!Number.isFinite(left) || !Number.isFinite(right)) return undefined;
+        const low = Math.min(left, right);
+        const high = Math.max(left, right);
+        const clampedHigh = maxReps > 0 ? Math.min(maxReps, Math.max(0, high)) : Math.max(0, high);
+        const clampedLow = Math.min(clampedHigh, Math.max(0, low));
+        return `${clampedLow}-${clampedHigh}`;
+    }
+
+    return clampRir(raw, reps);
+}
+
 function calculateLoadScore(data: any): number {
     const exercises = Array.isArray(data?.exercises) ? data.exercises : [];
     const score = exercises.reduce((total: number, exercise: any) => {
@@ -116,7 +137,7 @@ function normalizeWorkoutData(data: any) {
                         delete normalizedSet.rpe;
                     }
 
-                    const rir = clampRir(set?.rir, set?.reps);
+                    const rir = normalizeRirLogValue(set?.rir, set?.reps);
                     if (rir !== undefined) normalizedSet.rir = rir;
                     else delete normalizedSet.rir;
 

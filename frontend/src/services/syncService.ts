@@ -11,7 +11,7 @@ import {
     SyncWorkoutPayload,
     STORAGE_KEYS,
 } from "../types/workout";
-import { calculateLoadScoreFromExercises, clampRir, clampRpe } from "../utils/workoutMetrics";
+import { calculateLoadScoreFromExercises, clampRpe, normalizeRirLogValue } from "../utils/workoutMetrics";
 
 // ─── Helpers ─────────────────────────────────
 
@@ -45,7 +45,7 @@ function sessionToPayload(session: WorkoutSession): SyncWorkoutPayload {
                         weight: s.weight,
                         unit: s.unit,
                         rpe: s.rpe !== undefined && s.rpe !== "" ? clampRpe(s.rpe) : undefined,
-                        rir: clampRir((s as any).rir, s.reps),
+                        rir: normalizeRirLogValue((s as any).rir, s.reps),
                         isWarmup: s.isWarmup ?? false,
                     })),
             })).filter((ex) => ex.sets.length > 0),

@@ -45,7 +45,7 @@ import AccentButton from "../components/AccentButton";
 import { showAlert } from "../utils/confirm";
 import ActionConfirmModal from "../components/ActionConfirmModal";
 import NoticeModal from "../components/NoticeModal";
-import { calculateLoadScoreFromExercises, clampRir, clampRpe } from "../utils/workoutMetrics";
+import { calculateLoadScoreFromExercises, clampRpe, normalizeRirLogValue } from "../utils/workoutMetrics";
 
 // ─── Constants ───────────────────────────────
 
@@ -248,7 +248,7 @@ export default function WorkoutSessionScreen() {
                 ?.sets.find((set) => set.id === setId);
             const cachedReps = textCache[cacheKey(exerciseId, setId, "reps")];
             const repsForClamp = cachedReps !== undefined ? parseInt(cachedReps, 10) || 0 : currentSet?.reps;
-            updateSet(exerciseId, setId, field as any, clampRir(raw, repsForClamp) ?? "");
+            updateSet(exerciseId, setId, field as any, normalizeRirLogValue(raw, repsForClamp) ?? "");
             setTextCache((prev) => {
                 const next = { ...prev };
                 delete next[key];
@@ -285,7 +285,7 @@ export default function WorkoutSessionScreen() {
             nextSet.rpe = clampRpe(rpeRaw);
         }
         if (rirRaw !== undefined) {
-            (nextSet as any).rir = clampRir(rirRaw, nextSet.reps) ?? "";
+            (nextSet as any).rir = normalizeRirLogValue(rirRaw, nextSet.reps) ?? "";
         }
 
         return nextSet;
@@ -1132,7 +1132,7 @@ export default function WorkoutSessionScreen() {
                                             : "—"
                                     }
                                     placeholderTextColor={colors.accentDark}
-                                    keyboardType="number-pad"
+                                    keyboardType="default"
                                     selectionColor={colors.accent}
                                 />
                             </View>
@@ -1330,7 +1330,7 @@ export default function WorkoutSessionScreen() {
                                             : "—"
                                     }
                                     placeholderTextColor={colors.accentDark}
-                                    keyboardType="number-pad"
+                                    keyboardType="default"
                                     selectionColor={colors.accent}
                                 />
                             </View>
